@@ -53,7 +53,7 @@ import (
 	"github.com/bbmumford/tursokv/internal/rset"
 	"github.com/bbmumford/tursokv/internal/rstring"
 	"github.com/bbmumford/tursokv/internal/rzset"
-	"github.com/bbmumford/tursokv/internal/sqlx"
+	"github.com/bbmumford/tursokv/sqlx"
 )
 
 // Options configures the database connection.

@@ -1,11 +1,10 @@
-//go:build !windows
-
 // Package sqlx provides the database connection layer for TursoKV.
 //
 // It uses go-libsql (the CGO-based libSQL driver) which supports:
 //   - Embedded replicas with automatic sync to Turso Cloud
 //   - Native AES-256 encryption at rest
 //   - Concurrent writes via BEGIN CONCURRENT (MVCC)
+//   - All platforms: linux/{amd64,arm64}, darwin/{amd64,arm64}, windows/amd64
 //
 // Reference:
 //   - https://turso.tech/blog/beyond-the-single-writer-limitation-with-tursos-concurrent-writes
@@ -21,7 +20,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/tursodatabase/go-libsql"
+	"github.com/bbmumford/go-libsql"
 )
 
 // Options for database connection.

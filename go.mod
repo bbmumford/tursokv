@@ -2,10 +2,7 @@ module github.com/bbmumford/tursokv
 
 go 1.24.0
 
-require (
-	github.com/maozhijie/go-libsql v0.0.0-20251223092426-ef6c4dddaf25 // Windows support
-	github.com/tursodatabase/go-libsql v0.0.0-20251219133454-43644db490ff // macOS/Linux
-)
+require github.com/bbmumford/go-libsql v0.0.1
 
 require (
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
