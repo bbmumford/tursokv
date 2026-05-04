@@ -5,6 +5,7 @@ package rkey
 import (
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -341,8 +342,16 @@ func makePlaceholders(n int) string {
 	return string(s)
 }
 
+// sprintf substitutes the first "%s" in format with arg.
+//
+// Replaces the legacy off-by-one-and-a-half implementation
+// (`format[:len(format)-2] + arg + format[len(format)-1:]`) that only
+// "worked" because bbmumford/libsql's parser silently tolerated the
+// stray '%' character it left in the rendered SQL. tursogo's strict
+// Rust-based parser correctly rejects that with
+// "unexpected token '%' at offset N".
 func sprintf(format, arg string) string {
-	return format[:len(format)-2] + arg + format[len(format)-1:]
+	return strings.Replace(format, "%s", arg, 1)
 }
 
 // globToLike converts Redis glob pattern to SQL LIKE pattern.
