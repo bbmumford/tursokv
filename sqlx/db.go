@@ -148,6 +148,9 @@ func Open(path string, opts *Options) (*DB, error) {
 			Path:      path,
 			RemoteUrl: opts.SyncURL,
 			AuthToken: opts.AuthToken,
+			// Sync source databases may contain SQL triggers; tursogo's
+			// embedded engine refuses such databases without this flag.
+			ExperimentalFeatures: "triggers",
 		}
 		syncDb, err := turso.NewTursoSyncDb(ctx, syncCfg)
 		if err != nil {
@@ -205,14 +208,19 @@ func Open(path string, opts *Options) (*DB, error) {
 // buildLocalDSN composes the path with optional encryption query params
 // in the format tursogo expects on sql.Open("turso", …). Caller passes a
 // hex-encoded key; an empty key disables encryption.
+//
+// Always enables the "triggers" experimental feature so the engine can
+// open databases that contain SQL triggers (sync source DBs may have
+// them even when tursokv's own schema does not).
 func buildLocalDSN(path, encryptionHexKey string) string {
-	if encryptionHexKey == "" {
-		return path
-	}
+	features := []string{"triggers"}
 	q := url.Values{}
-	q.Set("experimental", "encryption")
-	q.Set("encryption_cipher", "aes256gcm")
-	q.Set("encryption_hexkey", encryptionHexKey)
+	if encryptionHexKey != "" {
+		features = append(features, "encryption")
+		q.Set("encryption_cipher", "aes256gcm")
+		q.Set("encryption_hexkey", encryptionHexKey)
+	}
+	q.Set("experimental", strings.Join(features, ","))
 	sep := "?"
 	if strings.Contains(path, "?") {
 		sep = "&"
