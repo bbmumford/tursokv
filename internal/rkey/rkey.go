@@ -342,14 +342,11 @@ func makePlaceholders(n int) string {
 	return string(s)
 }
 
-// sprintf substitutes the first "%s" in format with arg.
-//
-// Replaces the legacy off-by-one-and-a-half implementation
-// (`format[:len(format)-2] + arg + format[len(format)-1:]`) that only
-// "worked" because bbmumford/libsql's parser silently tolerated the
-// stray '%' character it left in the rendered SQL. tursogo's strict
-// Rust-based parser correctly rejects that with
-// "unexpected token '%' at offset N".
+// sprintf substitutes arg for the first "%s" in format and leaves every other
+// byte as it is. exists and del use it to put makePlaceholders' "?,?,..." into
+// their IN (%s) queries, whose "%s" is not at the end of the text; the engine's
+// parser refuses a query that still holds a '%', so the whole two-byte verb
+// must be replaced wherever it sits.
 func sprintf(format, arg string) string {
 	return strings.Replace(format, "%s", arg, 1)
 }
