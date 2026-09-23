@@ -44,12 +44,16 @@ func (r *recordingSyncer) record(call string) func() {
 func (r *recordingSyncer) Push(context.Context) error {
 	defer r.record("push")()
 	time.Sleep(time.Millisecond)
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return r.pushErr
 }
 
 func (r *recordingSyncer) Pull(context.Context) (bool, error) {
 	defer r.record("pull")()
 	time.Sleep(time.Millisecond)
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return false, r.pullErr
 }
 
@@ -102,15 +106,21 @@ func TestSyncLoopRunsOneRoundPerTick(t *testing.T) {
 	reports := make(chan error, 64)
 	db.startSync(5*time.Millisecond, func(err error) { reports <- err })
 
+	// Pushes keep failing until the loop itself has reported one: the calls
+	// made here can reach three before the loop's first tick, and a loop
+	// that never ran a failing round has nothing to report.
 	deadline := time.Now().Add(5 * time.Second)
-	for len(rec.snapshot()) < 3 && time.Now().Before(deadline) {
+	for (len(rec.snapshot()) < 3 || len(reports) == 0) && time.Now().Before(deadline) {
 		_ = db.Sync(context.Background())
 		time.Sleep(2 * time.Millisecond)
 	}
 	rec.mu.Lock()
 	rec.pushErr = nil
 	rec.mu.Unlock()
-	for len(rec.snapshot()) < 12 && time.Now().Before(deadline) {
+	// Then wait for a round that pushed and pulled, however many calls the
+	// failing phase already recorded.
+	pulled := func() bool { return strings.Contains(strings.Join(rec.snapshot(), ","), "push,pull") }
+	for (len(rec.snapshot()) < 12 || !pulled()) && time.Now().Before(deadline) {
 		time.Sleep(2 * time.Millisecond)
 	}
 	db.stopSync()
