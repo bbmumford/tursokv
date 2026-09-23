@@ -9,7 +9,12 @@ import (
 
 var (
 	errConnShape = errors.New("sqlx: driver connection lacks context exec, query or prepare")
+	errStmtShape = errors.New("sqlx: driver statement lacks context exec or query")
 	errTxDone    = errors.New("sqlx: transaction already finished")
+
+	// errTxEnded is what every statement, and Commit, returns once the engine
+	// has ended the transaction on a failed statement.
+	errTxEnded = errors.New("sqlx: the engine ended this transaction when a statement failed; none of its writes are kept and it takes no further statements")
 )
 
 // txConnector opens connections whose transactions begin with begin and that
@@ -69,22 +74,115 @@ type txConn struct {
 	prep  driver.ConnPrepareContext
 	begin string
 
+	// tx is the transaction open on this connection, nil in autocommit.
+	// database/sql calls a connection's methods, its statements' and its rows'
+	// one at a time, so tx and the flags it carries need no lock.
+	tx *txn
+
 	// broken is set when the connection could not be shown to be outside a
 	// transaction. database/sql reads it through IsValid and ResetSession and
 	// discards the connection instead of reusing it.
 	broken bool
 }
 
+// PrepareContext returns statements that check the transaction open on this
+// connection when they run, not when they are prepared: database/sql reuses
+// a statement prepared on a connection for a transaction later begun on it.
 func (c *txConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
-	return c.prep.PrepareContext(ctx, query)
+	if err := c.guard(); err != nil {
+		return nil, err
+	}
+	stmt, err := c.prep.PrepareContext(ctx, query)
+	c.noteFailure(err)
+	if err != nil {
+		return nil, err
+	}
+	stmtExec, okExec := stmt.(driver.StmtExecContext)
+	stmtQuery, okQuery := stmt.(driver.StmtQueryContext)
+	if !okExec || !okQuery {
+		_ = stmt.Close()
+		return nil, errStmtShape
+	}
+	return &txStmt{Stmt: stmt, exec: stmtExec, query: stmtQuery, conn: c}, nil
 }
 
 func (c *txConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
-	return c.exec.ExecContext(ctx, query, args)
+	if err := c.guard(); err != nil {
+		return nil, err
+	}
+	res, err := c.exec.ExecContext(ctx, query, args)
+	c.noteFailure(err)
+	return res, err
 }
 
 func (c *txConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
-	return c.query.QueryContext(ctx, query, args)
+	if err := c.guard(); err != nil {
+		return nil, err
+	}
+	rows, err := c.query.QueryContext(ctx, query, args)
+	c.noteFailure(err)
+	return c.watchRows(rows), err
+}
+
+// guard runs before every statement on the connection and refuses it once
+// the engine has ended the open transaction.
+//
+// WHY. The engine ends a transaction by itself when a statement hits a
+// write-write conflict, or runs INSERT OR ROLLBACK against a constraint, and
+// the connection is then in autocommit. A caller that goes on after the
+// failed statement would have every later statement committed at once, one
+// by one, while Commit reports a failure; Update's promise that a failed
+// transaction keeps nothing would not hold. So after any failed statement
+// inside a transaction the next statement, or Commit, first finds out
+// whether the transaction is still open.
+func (c *txConn) guard() error {
+	t := c.tx
+	if t == nil {
+		return nil
+	}
+	if t.suspect {
+		c.probe(t)
+	}
+	if t.ended {
+		return errTxEnded
+	}
+	return nil
+}
+
+// noteFailure marks the open transaction for a probe when a statement in it
+// failed.
+func (c *txConn) noteFailure(err error) {
+	if err != nil && c.tx != nil {
+		c.tx.suspect = true
+	}
+}
+
+// probe decides whether t is still open with the begin statement, which the
+// engine refuses inside an open transaction ("cannot start a transaction
+// within a transaction"). A refusal leaves t open and untouched. A BEGIN that
+// succeeds proves the engine had ended t: it is rolled back at once, t is
+// marked ended, and a connection whose ROLLBACK fails is discarded.
+func (c *txConn) probe(t *txn) {
+	t.suspect = false
+	ctx := context.Background()
+	if _, err := c.exec.ExecContext(ctx, c.begin, nil); err != nil {
+		return
+	}
+	t.ended = true
+	if _, err := c.exec.ExecContext(ctx, "ROLLBACK", nil); err != nil {
+		c.broken = true
+	}
+}
+
+// watchRows reports a row that fails to step inside a transaction to the
+// guard: the engine reports a write-write conflict in a statement run through
+// Query, such as UPDATE ... RETURNING, from Next. Rows outside a transaction
+// are returned as the engine made them.
+func (c *txConn) watchRows(rows driver.Rows) driver.Rows {
+	if rows == nil || c.tx == nil {
+		return rows
+	}
+	return &txRows{Rows: rows, tx: c.tx}
 }
 
 func (c *txConn) Ping(ctx context.Context) error {
@@ -105,7 +203,8 @@ func (c *txConn) BeginTx(ctx context.Context, _ driver.TxOptions) (driver.Tx, er
 	if _, err := c.exec.ExecContext(ctx, c.begin, nil); err != nil {
 		return nil, err
 	}
-	return &txn{conn: c}, nil
+	c.tx = &txn{conn: c}
+	return c.tx, nil
 }
 
 func (c *txConn) IsValid() bool { return !c.broken }
@@ -150,15 +249,39 @@ func (c *txConn) settle() bool {
 type txn struct {
 	conn *txConn
 	done bool
+
+	// suspect is set when a statement in the transaction failed and nothing
+	// has since shown the transaction to be open; guard and Commit probe it.
+	suspect bool
+	// ended is set once a probe showed the engine had ended the transaction.
+	ended bool
+}
+
+// finish marks the transaction done and returns the connection to autocommit
+// bookkeeping.
+func (t *txn) finish() {
+	t.done = true
+	if t.conn.tx == t {
+		t.conn.tx = nil
+	}
 }
 
 // Commit returns the engine's COMMIT error unchanged; after a failed COMMIT
-// the connection is settled so none of the transaction survives on it.
+// the connection is settled so none of the transaction survives on it. A
+// transaction the engine ended returns errTxEnded without issuing COMMIT:
+// none of it is left to commit, and the guard kept every later statement from
+// running in autocommit.
 func (t *txn) Commit() error {
 	if t.done {
 		return errTxDone
 	}
-	t.done = true
+	if t.suspect {
+		t.conn.probe(t)
+	}
+	t.finish()
+	if t.ended {
+		return errTxEnded
+	}
 	_, err := t.conn.exec.ExecContext(context.Background(), "COMMIT", nil)
 	if err != nil {
 		t.conn.settle()
@@ -173,10 +296,74 @@ func (t *txn) Rollback() error {
 	if t.done {
 		return errTxDone
 	}
-	t.done = true
+	t.finish()
+	if t.ended {
+		return nil
+	}
 	_, err := t.conn.exec.ExecContext(context.Background(), "ROLLBACK", nil)
 	if err == nil || t.conn.settle() {
 		return nil
+	}
+	return err
+}
+
+// txStmt runs an engine statement under the guard of the connection that
+// prepared it, whichever transaction is open on that connection when it runs.
+// database/sql calls ExecContext and QueryContext; Exec and Query serve a
+// caller holding the driver statement directly.
+type txStmt struct {
+	driver.Stmt
+	exec  driver.StmtExecContext
+	query driver.StmtQueryContext
+	conn  *txConn
+}
+
+func (s *txStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
+	if err := s.conn.guard(); err != nil {
+		return nil, err
+	}
+	res, err := s.exec.ExecContext(ctx, args)
+	s.conn.noteFailure(err)
+	return res, err
+}
+
+func (s *txStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
+	if err := s.conn.guard(); err != nil {
+		return nil, err
+	}
+	rows, err := s.query.QueryContext(ctx, args)
+	s.conn.noteFailure(err)
+	return s.conn.watchRows(rows), err
+}
+
+func (s *txStmt) Exec(args []driver.Value) (driver.Result, error) {
+	return s.ExecContext(context.Background(), ordinalArgs(args))
+}
+
+func (s *txStmt) Query(args []driver.Value) (driver.Rows, error) {
+	return s.QueryContext(context.Background(), ordinalArgs(args))
+}
+
+// ordinalArgs numbers positional values from 1, as database/sql does.
+func ordinalArgs(args []driver.Value) []driver.NamedValue {
+	out := make([]driver.NamedValue, len(args))
+	for i, v := range args {
+		out[i] = driver.NamedValue{Ordinal: i + 1, Value: v}
+	}
+	return out
+}
+
+// txRows marks the transaction that opened it for a probe when a row fails to
+// step. io.EOF is the end of the rows, not a failure.
+type txRows struct {
+	driver.Rows
+	tx *txn
+}
+
+func (r *txRows) Next(dest []driver.Value) error {
+	err := r.Rows.Next(dest)
+	if err != nil && !errors.Is(err, io.EOF) && !r.tx.done {
+		r.tx.suspect = true
 	}
 	return err
 }

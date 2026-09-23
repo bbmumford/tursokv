@@ -95,7 +95,7 @@ The zero value, `WriteModeAuto`, resolves to `WriteModeConcurrent` for a local f
 
 `Open` sets the journal mode on every open and reads it back, so a file can move between modes across opens.
 
-In `WriteModeConcurrent`, an `Update` whose transaction writes a row that another open transaction has already written fails with a write-write conflict. None of its writes are kept, and the caller decides whether to retry. Autocommit statements outside `Update` are serialised by the engine and do not conflict.
+In `WriteModeConcurrent`, an `Update` whose transaction writes a row that another open transaction has already written fails with a write-write conflict. None of its writes are kept, and the caller decides whether to retry. Writes outside `Update` (the non-transactional calls such as `db.Str().Set`) are serialised against each other by the engine, but one that writes a row an open `Update` has already written fails with the same write-write conflict.
 
 ```go
 db, err := tursokv.Open("./data.db", &tursokv.Options{
@@ -119,6 +119,8 @@ err := db.Update(func(tx *tursokv.Tx) error {
 ```
 
 Inside `Update` and `View`, run every statement through `tx`. In `WriteModeSerial` the pool's only connection is the one `tx` holds, so a statement through `db` would wait forever. `View` is not enforced read-only: the engine has no read-only transaction.
+
+A write-write conflict, or an `INSERT OR ROLLBACK` that hits a constraint, makes the engine end the transaction on the spot. From then on every statement through `tx` fails, and so does the commit, so a function that carries on after the failed statement (as the example above does, ignoring each error) still keeps nothing. When a failed statement leaves the transaction open, as a plain constraint failure does, the statements after it run in it as usual.
 
 ### Embedded Replica with Turso Cloud Sync
 

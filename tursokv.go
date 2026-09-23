@@ -111,7 +111,8 @@ const (
 	// WriteModeConcurrent runs a local file in the MVCC journal mode and
 	// begins every Update with BEGIN CONCURRENT on a multi-connection pool.
 	// An Update that writes a row another open transaction has written fails
-	// and keeps none of its writes.
+	// and keeps none of its writes; a write outside Update to such a row fails
+	// the same way.
 	WriteModeConcurrent = sqlx.WriteModeConcurrent
 
 	// WriteModeSerial begins every Update with BEGIN on a single connection,
@@ -262,8 +263,10 @@ func (db *DB) View(fn func(tx *Tx) error) error {
 // It begins with BEGIN CONCURRENT in WriteModeConcurrent and with BEGIN in
 // WriteModeSerial. In WriteModeConcurrent, Update fails when fn writes a row
 // another open transaction has written; nothing fn wrote is kept and fn may be
-// retried. fn must use tx for every statement: in WriteModeSerial the pool's
-// only connection is the one tx holds.
+// retried, even when fn ignored the failed call and went on: once the engine
+// has ended the transaction, every later call through tx fails. fn must use tx
+// for every statement: in WriteModeSerial the pool's only connection is the
+// one tx holds.
 func (db *DB) Update(fn func(tx *Tx) error) error {
 	return db.sdb.Update(func(stx *sql.Tx) error {
 		tx := newTx(stx, db.keyRepo, false)

@@ -259,6 +259,10 @@ func (db *DB) View(fn func(tx *sql.Tx) error) error {
 // in WriteModeConcurrent and with BEGIN in WriteModeSerial. In
 // WriteModeConcurrent, Update fails when fn writes a row another open
 // transaction has written; nothing fn wrote is kept and fn may be retried.
+// That conflict, like INSERT OR ROLLBACK against a constraint, ends the
+// transaction in the engine; every later statement through tx then fails and
+// Update returns an error, so an fn that goes on after the failed statement
+// still keeps nothing.
 //
 // fn must use tx for every statement. A statement run through the DB while fn
 // runs takes another pool connection, and in WriteModeSerial the pool's only

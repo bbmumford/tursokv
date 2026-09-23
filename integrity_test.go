@@ -174,3 +174,62 @@ func TestOpenDoesNotModifyOptions(t *testing.T) {
 		t.Fatalf("Open modified the caller's options: %+v", *opts)
 	}
 }
+
+// TestUpdateIgnoringConflictKeepsNothing writes the way the package example
+// does, ignoring each Set's error, while another Update holds the same key.
+// The Set that conflicts ends the transaction in the engine; the Set after it
+// must not be committed on its own, and Update must report the failure.
+func TestUpdateIgnoringConflictKeepsNothing(t *testing.T) {
+	db, err := tursokv.Open(filepath.Join(t.TempDir(), "conflict.db"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Str().Set("hot", "0"); err != nil {
+		t.Fatal(err)
+	}
+
+	wrote := make(chan struct{})
+	release := make(chan struct{})
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- db.Update(func(tx *tursokv.Tx) error {
+			if err := tx.Str().Set("hot", "first"); err != nil {
+				return err
+			}
+			close(wrote)
+			<-release
+			return nil
+		})
+	}()
+	select {
+	case <-wrote:
+	case err := <-firstDone:
+		t.Fatalf("first Update ended before writing: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("first Update neither wrote nor ended")
+	}
+
+	var conflict error
+	second := db.Update(func(tx *tursokv.Tx) error {
+		conflict = tx.Str().Set("hot", "second")
+		_ = tx.Str().Set("other", "x")
+		return nil
+	})
+	close(release)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first Update: %v", err)
+	}
+	if conflict == nil {
+		t.Fatal("second Set of the held key did not conflict; the test did not reach the engine-ended case")
+	}
+	if second == nil {
+		t.Fatal("Update reported success after its transaction was ended by a conflict")
+	}
+	if n, err := db.Key().Exists("other"); err != nil || n != 0 {
+		t.Fatalf("Exists(other) = %d, %v; the write after the conflict was committed", n, err)
+	}
+	if v, err := db.Str().Get("hot"); err != nil || v != "first" {
+		t.Fatalf("hot = %q, %v; want the first Update's value", v, err)
+	}
+}
