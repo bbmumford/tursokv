@@ -1,10 +1,12 @@
-// Package tursokv implements a Redis-compatible key-value store backed by Turso/libraryQL.
+// Package tursokv implements a Redis-compatible key-value store backed by the
+// Turso Database engine through turso.tech/database/tursogo.
 //
-// TursoKV provides Redis-like data structures (strings, lists, sets, hashes, sorted sets)
-// with the durability and SQL queryability of libraryQL/SQLite, plus Turso's advanced features:
-//   - Concurrent writes via BEGIN CONCURRENT (MVCC)
-//   - Native encryption for data-at-rest
-//   - Embedded replica sync with Turso Cloud
+// TursoKV provides Redis-like data structures (strings, lists, sets, hashes,
+// sorted sets) with the durability and SQL queryability of SQLite, plus
+// Turso's engine features:
+//   - Concurrent writes via BEGIN CONCURRENT on an MVCC local file
+//   - Encryption at rest for local files
+//   - Embedded replicas that push to and pull from Turso Cloud
 //
 // Unlike Redis, TursoKV:
 //   - Persists data to disk by default
@@ -44,7 +46,6 @@ import (
 	"database/sql"
 	"io"
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/bbmumford/tursokv/internal/rhash"
@@ -58,50 +59,77 @@ import (
 
 // Options configures the database connection.
 type Options struct {
-	// Timeout for database operations. Default: 5 seconds.
+	// Timeout sets each file-backed connection's maximum lifetime to ten
+	// times its value. Default: 5 seconds.
 	Timeout time.Duration
 
-	// Logger for database operations. Default: silent logger.
+	// Logger receives background sync failures. Default: silent logger.
 	Logger *slog.Logger
 
-	// ReadOnly opens the database in read-only mode.
+	// ReadOnly is accepted for configuration compatibility.
+	// TODO: apply it; the driver has no read-only open mode, so enforcing it
+	// needs PRAGMA query_only proved on every connection.
 	ReadOnly bool
 
 	// --- Turso-specific options ---
 
 	// SyncURL is the Turso Cloud URL for sync (e.g., "libsql://mydb-org.turso.io").
-	// If set, enables embedded replica mode with automatic sync.
+	// If set, the database is an embedded replica that syncs with it.
 	SyncURL string
 
 	// AuthToken for Turso Cloud authentication.
 	AuthToken string
 
-	// SyncInterval for automatic background sync. Default: 1 minute.
-	// Set to 0 to disable automatic sync (manual Push/Pull only).
+	// SyncInterval is how often the background loop runs Sync when SyncURL
+	// is set. Zero means the default of one minute; a negative value turns
+	// the loop off, leaving Sync to the caller.
 	SyncInterval time.Duration
 
-	// EncryptionKey for data-at-rest encryption (32 bytes hex-encoded).
-	// Uses AEGIS-256 cipher by default.
+	// EncryptionKey is a hex-encoded 32-byte key for encryption at rest with
+	// the aes256gcm cipher. It applies to local files only: a synced replica
+	// is stored unencrypted, and Open logs a warning when both are set.
 	EncryptionKey string
 
-	// Cipher algorithm: "aegis256" (default) or "aes256".
+	// Cipher is accepted for configuration compatibility.
+	// TODO: apply it; local encryption uses aes256gcm whatever this holds.
 	Cipher string
 
-	// UseConcurrent enables BEGIN CONCURRENT for MVCC writes.
-	// Allows multiple writers with row-level conflict detection.
-	UseConcurrent bool
+	// WriteMode selects how writes are taken. The zero value, WriteModeAuto,
+	// resolves to WriteModeConcurrent for a local file and WriteModeSerial
+	// for ":memory:" or a synced database; DB.WriteMode reports the result.
+	// Open refuses WriteModeConcurrent for ":memory:" or a synced database.
+	WriteMode WriteMode
 }
+
+// WriteMode selects how a database takes writes; see the constants.
+type WriteMode = sqlx.WriteMode
+
+const (
+	// WriteModeAuto resolves by database kind at Open.
+	WriteModeAuto = sqlx.WriteModeAuto
+
+	// WriteModeConcurrent runs a local file in the MVCC journal mode and
+	// begins every Update with BEGIN CONCURRENT on a multi-connection pool.
+	// An Update that writes a row another open transaction has written fails
+	// and keeps none of its writes.
+	WriteModeConcurrent = sqlx.WriteModeConcurrent
+
+	// WriteModeSerial begins every Update with BEGIN on a single connection,
+	// so writers queue.
+	WriteModeSerial = sqlx.WriteModeSerial
+)
+
+// defaultSyncInterval is the background sync period when SyncInterval is zero.
+const defaultSyncInterval = time.Minute
 
 // Default options.
 var defaultOptions = Options{
-	Timeout:       5 * time.Second,
-	Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
-	SyncInterval:  time.Minute,
-	Cipher:        "aegis256",
-	UseConcurrent: true,
+	Timeout:      5 * time.Second,
+	Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+	SyncInterval: defaultSyncInterval,
 }
 
-// DB is a Redis-like key-value store backed by Turso/libraryQL.
+// DB is a Redis-like key-value store backed by the Turso Database engine.
 // Thread-safe for concurrent use.
 type DB struct {
 	sdb    *sqlx.DB
@@ -115,22 +143,19 @@ type DB struct {
 	listRepo *rlist.DB
 	setRepo  *rset.DB
 	zsetRepo *rzset.DB
-
-	// Sync control
-	syncMu     sync.Mutex
-	syncCancel context.CancelFunc
 }
 
 // Open opens or creates a TursoKV database at the given path.
 //
 // Path formats:
 //   - "path/to/db.db" - Local file database
-//   - ":memory:" - In-memory database
-//   - "file:db.db?mode=ro" - SQLite URI format
+//   - ":memory:" - In-memory database, held on one connection for its life
 //
-// With encryption:
+// With encryption at rest (local files only):
 //
-//	db, _ := tursokv.Open("file:data.db?cipher=aegis256&hexkey=...", nil)
+//	db, _ := tursokv.Open("data.db", &tursokv.Options{
+//	    EncryptionKey: "<64 hex characters>",
+//	})
 //
 // With Turso sync:
 //
@@ -138,33 +163,24 @@ type DB struct {
 //	    SyncURL:   "libsql://mydb-org.turso.io",
 //	    AuthToken: "token",
 //	})
+//
+// opts is read, never modified.
 func Open(path string, opts *Options) (*DB, error) {
-	if opts == nil {
-		opts = &Options{}
+	o := Options{}
+	if opts != nil {
+		o = *opts
 	}
-	mergeOptions(opts, &defaultOptions)
+	mergeOptions(&o, &defaultOptions)
 
-	// Build connection options
-	sqlOpts := &sqlx.Options{
-		Timeout:       opts.Timeout,
-		ReadOnly:      opts.ReadOnly,
-		SyncURL:       opts.SyncURL,
-		AuthToken:     opts.AuthToken,
-		EncryptionKey: opts.EncryptionKey,
-		SyncInterval:  opts.SyncInterval,
-		UseConcurrent: opts.UseConcurrent,
-	}
-
-	// Open database
-	sdb, err := sqlx.Open(path, sqlOpts)
+	sdb, err := sqlx.Open(path, connectionOptions(o))
 	if err != nil {
 		return nil, err
 	}
 
 	db := &DB{
 		sdb:    sdb,
-		opts:   *opts,
-		logger: opts.Logger,
+		opts:   o,
+		logger: o.Logger,
 	}
 
 	// Initialize repositories
@@ -175,18 +191,18 @@ func Open(path string, opts *Options) (*DB, error) {
 	db.setRepo = rset.New(sdb, db.keyRepo)
 	db.zsetRepo = rzset.New(sdb, db.keyRepo)
 
-	// Start background sync if configured
-	if opts.SyncURL != "" && opts.SyncInterval > 0 {
-		db.startSync()
-	}
-
 	return db, nil
 }
 
-// Close closes the database connection.
+// Close stops the background sync loop, waiting for a round in progress to
+// return, then closes the database.
 func (db *DB) Close() error {
-	db.stopSync()
 	return db.sdb.Close()
+}
+
+// WriteMode reports the write mode Open resolved and established.
+func (db *DB) WriteMode() WriteMode {
+	return db.sdb.WriteMode()
 }
 
 // Key returns the key repository for key management operations.
@@ -224,13 +240,17 @@ func (db *DB) Log() *slog.Logger {
 	return db.logger
 }
 
-// SQL returns the underlying *sql.DB for direct SQL operations.
-// Use this when you need raw SQL queries beyond the Redis-like API.
+// SQL returns the pool for SQL beyond the Redis-like API. Every connection it
+// hands out has foreign keys on and refuses statements that turn them off.
+// Open transactions with BeginTx, never with a BEGIN statement: a connection
+// returned to the pool inside a transaction carries later callers' writes into
+// it.
 func (db *DB) SQL() *sql.DB {
 	return db.sdb.DB()
 }
 
-// View executes a read-only transaction.
+// View executes a transaction for reads. The engine has no read-only
+// transaction, so fn is trusted not to write.
 func (db *DB) View(fn func(tx *Tx) error) error {
 	return db.sdb.View(func(stx *sql.Tx) error {
 		tx := newTx(stx, db.keyRepo, true)
@@ -238,8 +258,12 @@ func (db *DB) View(fn func(tx *Tx) error) error {
 	})
 }
 
-// Update executes a read-write transaction.
-// Uses BEGIN CONCURRENT if UseConcurrent is enabled.
+// Update executes a read-write transaction, committing when fn returns nil.
+// It begins with BEGIN CONCURRENT in WriteModeConcurrent and with BEGIN in
+// WriteModeSerial. In WriteModeConcurrent, Update fails when fn writes a row
+// another open transaction has written; nothing fn wrote is kept and fn may be
+// retried. fn must use tx for every statement: in WriteModeSerial the pool's
+// only connection is the one tx holds.
 func (db *DB) Update(fn func(tx *Tx) error) error {
 	return db.sdb.Update(func(stx *sql.Tx) error {
 		tx := newTx(stx, db.keyRepo, false)
@@ -249,11 +273,17 @@ func (db *DB) Update(fn func(tx *Tx) error) error {
 
 // --- Sync operations ---
 
-// Sync synchronizes with Turso Cloud.
-// In embedded replica mode, this pulls remote changes and commits local ones.
+// Sync pushes local writes to Turso Cloud, then pulls remote changes. It
+// returns nil at once for a database opened without SyncURL, and runs one at a
+// time with the background loop.
+//
+// CONDITIONS. The last push wins: the remote applies pushes in the order they
+// arrive, so when two replicas write the same row, the value from the later
+// push is what every replica holds after its next pull. Local writes not yet
+// pushed are replayed on top of each pull, so this replica reads its own
+// values for them until they are pushed. A failed push stops Sync before the
+// pull and leaves those writes queued for the next Sync.
 func (db *DB) Sync(ctx context.Context) error {
-	db.syncMu.Lock()
-	defer db.syncMu.Unlock()
 	return db.sdb.Sync(ctx)
 }
 
@@ -262,36 +292,26 @@ func (db *DB) Checkpoint(ctx context.Context) error {
 	return db.sdb.Checkpoint(ctx)
 }
 
-// startSync starts the background sync goroutine.
-func (db *DB) startSync() {
-	ctx, cancel := context.WithCancel(context.Background())
-	db.syncCancel = cancel
-
-	go func() {
-		ticker := time.NewTicker(db.opts.SyncInterval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if err := db.Sync(ctx); err != nil {
-					db.logger.Warn("background sync failed", "error", err)
-				}
-			}
-		}
-	}()
-}
-
-// stopSync stops the background sync goroutine.
-func (db *DB) stopSync() {
-	if db.syncCancel != nil {
-		db.syncCancel()
+// connectionOptions maps merged Options onto the connection layer: a negative
+// SyncInterval becomes zero, which runs no background loop, and background
+// sync failures go to the Logger.
+func connectionOptions(o Options) *sqlx.Options {
+	logger := o.Logger
+	return &sqlx.Options{
+		Timeout:       o.Timeout,
+		ReadOnly:      o.ReadOnly,
+		SyncURL:       o.SyncURL,
+		AuthToken:     o.AuthToken,
+		EncryptionKey: o.EncryptionKey,
+		WriteMode:     o.WriteMode,
+		SyncInterval:  max(o.SyncInterval, 0),
+		SyncErrors: func(err error) {
+			logger.Warn("background sync failed", "error", err)
+		},
 	}
 }
 
-// mergeOptions merges user options with defaults.
+// mergeOptions fills opts fields left at their zero value from defaults.
 func mergeOptions(opts, defaults *Options) {
 	if opts.Timeout == 0 {
 		opts.Timeout = defaults.Timeout
@@ -301,8 +321,5 @@ func mergeOptions(opts, defaults *Options) {
 	}
 	if opts.SyncInterval == 0 {
 		opts.SyncInterval = defaults.SyncInterval
-	}
-	if opts.Cipher == "" {
-		opts.Cipher = defaults.Cipher
 	}
 }

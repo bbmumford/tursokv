@@ -1,7 +1,7 @@
 // Example: Basic TursoKV usage demonstrating all data types
 //
 // This shows how to use TursoKV as a Redis-compatible key-value store
-// backed by Turso/libraryQL with full ACID transactions.
+// backed by the Turso Database engine with full ACID transactions.
 
 package main
 

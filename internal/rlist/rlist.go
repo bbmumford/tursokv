@@ -4,6 +4,7 @@ package rlist
 
 import (
 	"database/sql"
+	"math"
 	"time"
 
 	"github.com/bbmumford/tursokv/internal/rkey"
@@ -736,40 +737,37 @@ func linsert(db Querier, key, pivot, value string, before bool) (int, error) {
 	return llen(db, key)
 }
 
+// lremSelect builds the query that picks which occurrences of value LREM
+// removes: every one for count 0, the first count from the head for count > 0,
+// and the last -count from the tail for count < 0. The limit is a bound
+// parameter, so a count of any size stays one integer argument.
+func lremSelect(keyID int64, count int, value string) (string, []any) {
+	args := []any{keyID, []byte(value)}
+	const match = `SELECT pos FROM rlist WHERE key_id = ? AND value = ?`
+	switch {
+	case count == 0:
+		return match, args
+	case count > 0:
+		return match + ` ORDER BY pos ASC LIMIT ?`, append(args, int64(count))
+	default:
+		limit := -int64(count)
+		if limit < 0 {
+			// -count overflows only for the most negative int, which asks
+			// for more occurrences than a list can hold.
+			limit = math.MaxInt64
+		}
+		return match + ` ORDER BY pos DESC LIMIT ?`, append(args, limit)
+	}
+}
+
 func lrem(db Querier, key string, count int, value string) (int, error) {
 	keyID, err := getKeyID(db, key)
 	if err != nil || keyID == 0 {
 		return 0, err
 	}
 
-	var query string
-	var limit string
-
-	if count == 0 {
-		// Remove all
-		query = `
-			SELECT pos FROM rlist
-			WHERE key_id = ? AND value = ?
-		`
-	} else if count > 0 {
-		// Remove from head
-		query = `
-			SELECT pos FROM rlist
-			WHERE key_id = ? AND value = ?
-			ORDER BY pos ASC
-		`
-		limit = " LIMIT " + string(rune(count+'0'))
-	} else {
-		// Remove from tail
-		query = `
-			SELECT pos FROM rlist
-			WHERE key_id = ? AND value = ?
-			ORDER BY pos DESC
-		`
-		limit = " LIMIT " + string(rune(-count+'0'))
-	}
-
-	rows, err := db.Query(query+limit, keyID, []byte(value))
+	query, args := lremSelect(keyID, count, value)
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return 0, err
 	}
