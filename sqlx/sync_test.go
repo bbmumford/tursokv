@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -386,4 +387,38 @@ func TestSyncedReplicaBackgroundLoop(t *testing.T) {
 			t.Fatalf("requests with no SyncInterval: %v", got)
 		}
 	})
+}
+
+// TestOpenRefusesEncryptionKeyWithSyncURL gives Open a key and a SyncURL
+// together against a remote that records every request: Open returns
+// ErrEncryptionWithSync, the remote sees no request and the database's
+// directory is never created. Each setting alone still opens, so what is
+// refused is the pair.
+func TestOpenRefusesEncryptionKeyWithSyncURL(t *testing.T) {
+	const key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	rec := &pathRecorder{}
+	remote := httptest.NewServer(rec)
+	defer remote.Close()
+
+	dir := filepath.Join(t.TempDir(), "never-created")
+	db, err := Open(filepath.Join(dir, "replica.db"), &Options{SyncURL: remote.URL, EncryptionKey: key})
+	if err == nil {
+		db.Close()
+	}
+	if !errors.Is(err, ErrEncryptionWithSync) {
+		t.Fatalf("Open with EncryptionKey and SyncURL: err = %v, want %v", err, ErrEncryptionWithSync)
+	}
+	if got := rec.snapshot(); len(got) != 0 {
+		t.Fatalf("the refused Open contacted the remote: %v", got)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the refused Open created %s (stat err %v)", dir, err)
+	}
+
+	openOfflineReplica(t, &Options{SyncURL: remote.URL})
+	local, err := Open(filepath.Join(t.TempDir(), "local.db"), &Options{EncryptionKey: key})
+	if err != nil {
+		t.Fatalf("Open with EncryptionKey alone: %v", err)
+	}
+	local.Close()
 }

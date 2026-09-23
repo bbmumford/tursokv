@@ -168,7 +168,7 @@ tursodb server.db --sync-server 127.0.0.1:8080 &
 TURSOKV_SYNC_URL=http://127.0.0.1:8080 go test -count=1 -run TestSyncConditionsLive .
 ```
 
-A replica is always `WriteModeSerial` and is stored unencrypted. `Open` logs a warning when `EncryptionKey` is set together with `SyncURL`.
+A replica is always `WriteModeSerial` and is stored unencrypted: tursogo's sync API takes no encryption settings. `Open` therefore refuses `EncryptionKey` together with `SyncURL`, returning `tursokv.ErrEncryptionWithSync` before it creates any file or contacts the remote.
 
 ### Encryption at Rest (local files)
 
@@ -190,8 +190,9 @@ db, err := tursokv.Open("./data.db", &tursokv.Options{
     AuthToken:    "your-token",
     SyncInterval: time.Minute,
 
-    // Local files only
-    EncryptionKey: "<64 hex characters>",
+    // Local files only: Open returns ErrEncryptionWithSync when this is set
+    // together with SyncURL.
+    // EncryptionKey: "<64 hex characters>",
 
     // Writes
     WriteMode: tursokv.WriteModeAuto,
@@ -322,24 +323,30 @@ Keys(pattern string) ([]string, error)
 
 ## Schema
 
-```sql
--- Key metadata (type, expiration, version)
-CREATE TABLE rkey (
-    id INTEGER PRIMARY KEY,
-    key TEXT NOT NULL UNIQUE,
-    type INTEGER NOT NULL DEFAULT 1,  -- 1=string, 2=list, 3=set, 4=hash, 5=zset
-    version INTEGER NOT NULL DEFAULT 0,
-    etime INTEGER,                    -- expiration time (Unix ms), NULL = none
-    mtime INTEGER NOT NULL
-);
+`sqlx.ApplySchema` creates TursoKV's tables and indexes in any `*sql.DB`, and `Open` calls it on every open. Every statement is `CREATE … IF NOT EXISTS`, so running it again adds only what is missing. It does not check the shape of a table that already exists; it fails only when a statement fails, such as an index naming a column the existing table lacks.
 
--- Value tables: each row belongs to one key and is deleted with it.
-CREATE TABLE rstring (key_id INTEGER PRIMARY KEY REFERENCES rkey(id) ON DELETE CASCADE, value BLOB NOT NULL);
-CREATE TABLE rlist   (key_id INTEGER NOT NULL REFERENCES rkey(id) ON DELETE CASCADE, pos REAL NOT NULL, value BLOB NOT NULL, PRIMARY KEY (key_id, pos));
-CREATE TABLE rset    (key_id INTEGER NOT NULL REFERENCES rkey(id) ON DELETE CASCADE, member BLOB NOT NULL, PRIMARY KEY (key_id, member));
-CREATE TABLE rhash   (key_id INTEGER NOT NULL REFERENCES rkey(id) ON DELETE CASCADE, field TEXT NOT NULL, value BLOB NOT NULL, PRIMARY KEY (key_id, field));
-CREATE TABLE rzset   (key_id INTEGER NOT NULL REFERENCES rkey(id) ON DELETE CASCADE, member BLOB NOT NULL, score REAL NOT NULL, PRIMARY KEY (key_id, member));
+```go
+db, err := sql.Open("turso", "scratch.db")
+if err != nil {
+    log.Fatal(err)
+}
+if err := sqlx.ApplySchema(ctx, db); err != nil {
+    log.Fatal(err)
+}
 ```
+
+The DDL is the `schema` constant in `sqlx/schema.go`. It creates:
+
+| Table | Holds | Primary key | Indexes |
+|-------|-------|-------------|---------|
+| `rkey` | One row per key: `key` (UNIQUE), `type` (1 string, 2 list, 3 set, 4 hash, 5 sorted set), `version`, `etime` (expiry in Unix ms, NULL for none), `mtime` (last write in Unix ms) | `id` | `rkey_etime` on `etime` where it is set; `rkey_type` on `type` |
+| `rstring` | A string key's `value` | `key_id` | none |
+| `rlist` | List elements, ordered by `pos`, a REAL so an element can go between two others | `(key_id, pos)` | `rlist_key` |
+| `rset` | Set members | `(key_id, member)` | `rset_key` |
+| `rhash` | Hash fields and values | `(key_id, field)` | `rhash_key` |
+| `rzset` | Sorted-set members and scores | `(key_id, member)` | `rzset_key`; `rzset_score` on `(key_id, score)` |
+
+Every value table's `key_id` references `rkey(id) ON DELETE CASCADE`, so deleting a key deletes its values, but only on a connection with foreign keys on. A caller that applies the schema to its own `*sql.DB` must turn them on for every connection.
 
 The engine opens every connection with foreign keys off, so a one-time `PRAGMA foreign_keys=ON` would reach only one connection of the pool. `tursokv` therefore opens every pool through `policypool` with `ForeignKeysRequired`. Each physical connection sets and reads back `PRAGMA foreign_keys` when it opens and again each time it is reused; a connection that cannot prove it is discarded. For a replica, whose pool tursogo builds internally, the pool is held to one connection and each connection is proved the same way.
 

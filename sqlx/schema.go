@@ -1,9 +1,32 @@
 package sqlx
 
-// schema is the TursoKV table layout, applied by Open on every open. Every
-// value table references rkey(id) ON DELETE CASCADE, which removes a key's
-// values with the key only while foreign keys are enforced on the connection
-// that deletes it; Open enforces them on every connection.
+import (
+	"context"
+	"database/sql"
+	"fmt"
+)
+
+// ApplySchema creates TursoKV's tables and indexes in db, running schema as
+// one multi-statement Exec. Every statement is CREATE ... IF NOT EXISTS, so it
+// runs on every open and leaves a database that already holds them unchanged;
+// it does not compare an existing table's shape, and fails only when a
+// statement does, such as an index naming a column the existing table lacks.
+//
+// Open calls it on the policy-proved pool it builds. A caller holding its own
+// *sql.DB, such as a tool that dumps the schema from a scratch database, calls
+// it directly. The value tables' ON DELETE CASCADE removes a key's values only
+// on a connection with foreign keys on; Open's pool proves that on every
+// connection, and a caller's db must do the same.
+func ApplySchema(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, schema); err != nil {
+		return fmt.Errorf("init schema: %w", err)
+	}
+	return nil
+}
+
+// schema is the TursoKV table layout ApplySchema applies. Every value table
+// references rkey(id) ON DELETE CASCADE, which removes a key's values with the
+// key only while foreign keys are enforced on the connection that deletes it.
 const schema = `
 -- Key metadata table
 -- Tracks all keys with their types and TTL

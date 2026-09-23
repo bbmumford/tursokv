@@ -86,8 +86,8 @@ type Options struct {
 	SyncInterval time.Duration
 
 	// EncryptionKey is a hex-encoded 32-byte key for encryption at rest with
-	// the aes256gcm cipher. It applies to local files only: a synced replica
-	// is stored unencrypted, and Open logs a warning when both are set.
+	// the aes256gcm cipher. It applies to local files only: Open refuses it
+	// together with SyncURL, returning ErrEncryptionWithSync.
 	EncryptionKey string
 
 	// Cipher is accepted for configuration compatibility.
@@ -123,6 +123,11 @@ const (
 	// so writers queue.
 	WriteModeSerial = sqlx.WriteModeSerial
 )
+
+// ErrEncryptionWithSync is what Open returns when Options sets both
+// EncryptionKey and SyncURL: the sync engine takes no encryption settings, so
+// the replica would hold in plaintext data the caller asked to have encrypted.
+var ErrEncryptionWithSync = sqlx.ErrEncryptionWithSync
 
 // defaultSyncInterval is the background sync period when SyncInterval is zero.
 const defaultSyncInterval = time.Minute

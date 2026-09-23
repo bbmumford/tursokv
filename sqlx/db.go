@@ -12,15 +12,16 @@
 //
 // Encryption at rest applies to local files only, through the DSN options
 // encryption_cipher=aes256gcm and encryption_hexkey. tursogo's sync API takes
-// no encryption settings, so a synced database stores data unencrypted.
+// no encryption settings, so Open refuses a key given with a SyncURL; see
+// ErrEncryptionWithSync.
 package sqlx
 
 import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
-	"log"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -51,9 +52,9 @@ type Options struct {
 	// AuthToken authenticates to SyncURL.
 	AuthToken string
 
-	// EncryptionKey is a hex-encoded AES-256 key for encryption at rest. It
-	// applies to local files only; with SyncURL set, Open logs a warning and
-	// the replica is stored unencrypted.
+	// EncryptionKey is a hex-encoded AES-256 key for encryption at rest of a
+	// local file. Open refuses it together with SyncURL, returning
+	// ErrEncryptionWithSync.
 	EncryptionKey string
 
 	// WriteMode selects how writes are taken; see WriteMode. The zero value
@@ -67,6 +68,13 @@ type Options struct {
 	// SyncErrors receives each failed background Sync. Nil drops them.
 	SyncErrors func(error)
 }
+
+// ErrEncryptionWithSync is what Open returns when Options sets both
+// EncryptionKey and SyncURL. The replica is created through
+// turso.TursoSyncDbConfig, which has no local encryption setting, so opening
+// it would store in plaintext data the caller asked to have encrypted. Open
+// returns it before it creates a directory or file or contacts the remote.
+var ErrEncryptionWithSync = errors.New("sqlx: EncryptionKey cannot be used with SyncURL: the sync engine takes no encryption settings, so the replica would be stored unencrypted")
 
 // DB is a TursoKV database: a policy-proved connection pool plus, for an
 // embedded replica, the sync engine it pushes and pulls through.
@@ -84,7 +92,9 @@ type DB struct {
 }
 
 // Open opens a local, in-memory or synced database, establishes the write
-// mode, proves foreign keys on the first connection and creates the schema.
+// mode, proves foreign keys on the first connection and creates the schema
+// through ApplySchema. It returns ErrEncryptionWithSync, before touching the
+// file system or the remote, when opts sets both EncryptionKey and SyncURL.
 //
 // Examples:
 //
@@ -108,6 +118,9 @@ func open(path string, opts *Options, bootstrap bool) (*DB, error) {
 	}
 	memory := isMemoryPath(path)
 	synced := opts.SyncURL != ""
+	if synced && opts.EncryptionKey != "" {
+		return nil, ErrEncryptionWithSync
+	}
 	mode, err := resolveWriteMode(opts.WriteMode, memory, synced)
 	if err != nil {
 		return nil, err
@@ -157,9 +170,9 @@ func openOn(ctx context.Context, base driver.Connector, engine syncer, mode Writ
 		pool.Close()
 		return nil, err
 	}
-	if _, err := pool.ExecContext(ctx, schema); err != nil {
+	if err := ApplySchema(ctx, pool); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("init schema: %w", err)
+		return nil, err
 	}
 	return &DB{db: pool, sync: engine, mode: mode}, nil
 }
@@ -168,9 +181,6 @@ func openOn(ctx context.Context, base driver.Connector, engine syncer, mode Writ
 // one connection so the policy pool wrapped around it maps one to one. With
 // bootstrap set, an empty replica pulls the remote's state before returning.
 func openSyncEngine(ctx context.Context, path string, opts *Options, bootstrap bool) (*turso.TursoSyncDb, *sql.DB, error) {
-	if opts.EncryptionKey != "" {
-		log.Printf("[tursokv] WARNING: EncryptionKey set with SyncURL; tursogo's sync API takes no encryption settings, so the replica is stored unencrypted")
-	}
 	syncDb, err := turso.NewTursoSyncDb(ctx, turso.TursoSyncDbConfig{
 		Path:             path,
 		RemoteUrl:        opts.SyncURL,
