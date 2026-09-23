@@ -21,15 +21,19 @@ const syncRoundTimeout = 30 * time.Second
 
 // Sync sends local writes to the remote and then applies the remote's changes
 // locally. It returns nil at once when no SyncURL is configured. Calls from
-// callers and from the background loop run one at a time.
+// callers and from the background loop run one at a time. A failed Push
+// returns its error without running Pull.
 //
-// CONDITIONS. Replicas converge by push order, so the last push wins: the
-// remote applies each replica's pushed writes in the order the pushes arrive,
-// and when two replicas wrote the same row, the value from the later push is
-// the one every replica holds after its next pull. Pull replays local writes
-// that have not been pushed on top of the pulled state, so until they are
-// pushed this replica reads its own values for those rows. A failed Push
-// stops Sync before Pull, and its writes stay queued for the next Push.
+// CONDITIONS, as measured with two tursokv replicas against a tursodb 0.7.2
+// sync server; Turso Cloud has not been measured. A row both replicas wrote
+// holds the later push's value on every replica. Each replica assigns rkey
+// ids itself, so keys two replicas create between syncs can take the same
+// id, and the later push replaces the earlier key's row everywhere with no
+// error. A change the server refuses (rkey's UNIQUE key, for a key the other
+// replica pushed first) fails that Sync; the next Sync returns nil and the
+// refused change is gone from this replica, while the value row it carried
+// is applied to whichever key holds its id on the server. Two replicas that
+// both create keys can therefore lose one another's writes without an error.
 func (db *DB) Sync(ctx context.Context) error {
 	if db.sync == nil {
 		return nil

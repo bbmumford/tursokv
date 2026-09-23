@@ -13,12 +13,12 @@ A Redis-like key-value store backed by the Turso Database engine, with concurren
 | **Edge/Client apps** | ✅ Best fit | ❌ Overkill |
 | **Single-node caching** | ✅ Best fit | ❌ Overkill |
 | **Mesh node coordination** | ❌ No consensus | ✅ Best fit |
-| **Distributed sessions** | ❌ Last push wins | ✅ Strong consistency |
-| **Global sync via cloud** | ✅ Via Turso Cloud | ✅ Via Turso Cloud |
-| **Offline-first mobile/edge** | ✅ Embedded replica | ❌ Requires cluster |
+| **Distributed sessions** | ❌ Replicas that both write can lose each other's writes | ✅ Strong consistency |
+| **Global sync via cloud** | ⚠️ One writing replica per database | ✅ Via Turso Cloud |
+| **Offline-first mobile/edge** | ⚠️ Embedded replica, one writer per database | ❌ Requires cluster |
 
 **Rule of thumb**:
-- **TursoKV** = Single-node or edge devices syncing to cloud
+- **TursoKV** = Single-node, or edge devices syncing to cloud where one replica writes each database
 - **TursoRaft** = Multiple mesh nodes requiring consensus
 
 ## Features
@@ -152,10 +152,21 @@ db.Checkpoint(context.Background())
 
 A new replica pulls the remote's state during `Open`. After that, `Sync` pushes local writes to the remote and then pulls the remote's changes. One background loop runs `Sync` every `SyncInterval`, and each failure is logged at warn level through `Options.Logger`. `Close` stops the loop, waiting for any round in progress.
 
-**Conflict semantics: the last push wins.**
-- The remote applies each replica's pushes in the order they arrive. When two replicas write the same row, every replica holds the value from the later push after its next pull.
-- A pull replays local writes that have not been pushed on top of the pulled state, so until they are pushed this replica reads its own values for those rows.
-- A failed push stops `Sync` before the pull, and those writes stay queued for the next push.
+A failed push makes `Sync` return its error without pulling.
+
+**Conflict behaviour between replicas.** Measured with two replicas against a `tursodb` 0.7.2 `--sync-server`; Turso Cloud has not been measured.
+- A row both replicas wrote holds the later push's value on every replica: when one replica counts a counter to 10 and the other to 3, and the second pushes last, both read 3.
+- Each replica assigns `rkey` ids itself, so new keys created on two replicas between syncs can take the same id. The later push replaces the earlier key's row: that key and its value are gone on every replica, and no `Sync` reports an error.
+- A change the server refuses, such as a new key the other replica pushed first (`rkey`'s UNIQUE key), fails that `Sync`. The next `Sync` returns nil and the refused change is discarded: this replica reads the other replica's value for the key, and the refused value row lands on whichever key holds its id on the server.
+
+So two replicas that both create keys can lose one another's writes without any error; only a database with one writing replica avoids it.
+
+`TestSyncConditionsLive` checks these conditions against a running sync server and is skipped unless `TURSOKV_SYNC_URL` names one:
+
+```bash
+tursodb server.db --sync-server 127.0.0.1:8080 &
+TURSOKV_SYNC_URL=http://127.0.0.1:8080 go test -count=1 -run TestSyncConditionsLive .
+```
 
 A replica is always `WriteModeSerial` and is stored unencrypted. `Open` logs a warning when `EncryptionKey` is set together with `SyncURL`.
 

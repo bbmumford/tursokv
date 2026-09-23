@@ -3,7 +3,8 @@
 // Writes land in the local file first; Sync pushes them to the remote and
 // pulls the remote's changes, and a background loop does the same every
 // SyncInterval. A synced replica takes writes serially and is stored
-// unencrypted.
+// unencrypted. Keep one writing replica per database: two replicas that both
+// create keys can lose one another's writes without an error (see DB.Sync).
 
 package main
 

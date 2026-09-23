@@ -279,16 +279,28 @@ func (db *DB) Update(fn func(tx *Tx) error) error {
 
 // --- Sync operations ---
 
-// Sync pushes local writes to Turso Cloud, then pulls remote changes. It
+// Sync pushes local writes to the remote, then pulls remote changes. It
 // returns nil at once for a database opened without SyncURL, and runs one at a
-// time with the background loop.
+// time with the background loop. A failed push returns its error without
+// pulling.
 //
-// CONDITIONS. The last push wins: the remote applies pushes in the order they
-// arrive, so when two replicas write the same row, the value from the later
-// push is what every replica holds after its next pull. Local writes not yet
-// pushed are replayed on top of each pull, so this replica reads its own
-// values for them until they are pushed. A failed push stops Sync before the
-// pull and leaves those writes queued for the next Sync.
+// CONDITIONS, as measured with two replicas against a tursodb 0.7.2 sync
+// server (TestSyncConditionsLive); Turso Cloud has not been measured.
+//   - A row both replicas wrote holds the later push's value everywhere:
+//     when one replica counts a counter to 10 and the other to 3, and the
+//     second pushes last, both read 3.
+//   - Each replica assigns rkey ids itself, so new keys created on two
+//     replicas between syncs can take the same id. The later push then
+//     replaces the earlier key's row: that key and its value are gone on
+//     every replica, and no Sync reports an error.
+//   - A change the server refuses, such as a new key the other replica
+//     pushed first (rkey's UNIQUE key), fails that Sync. The next Sync
+//     returns nil and the refused change is discarded: this replica reads
+//     the other replica's value for the key, and the refused value row lands
+//     on whichever key holds its rkey id on the server.
+//
+// So two replicas that both create keys can lose one another's writes
+// without an error; only a database with one writing replica avoids it.
 func (db *DB) Sync(ctx context.Context) error {
 	return db.sdb.Sync(ctx)
 }
