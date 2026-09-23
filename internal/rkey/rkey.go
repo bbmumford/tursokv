@@ -7,6 +7,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/bbmumford/tursokv/internal/store"
 )
 
 // Type represents the data type stored for a key.
@@ -82,13 +84,25 @@ type Querier interface {
 	QueryRow(query string, args ...any) *sql.Row
 }
 
-// DB is the key repository for non-transactional operations.
+// DB is the key repository for calls made outside Update. Each call that
+// writes (Delete, Expire, ExpireAt, Persist) is one statement run through
+// db.Atomic; reads run in autocommit.
+//
+// WHY WRITES GO THROUGH ATOMIC. The DB-path writes of rstring, rhash, rlist,
+// rset and rzset run as transactions through Atomic, and those that add
+// values upsert the key's rkey row: rstring's setBytes, rhash's hsetBytes and
+// the getOrCreateKey of rlist, rset and rzset. In WriteModeConcurrent an
+// autocommit statement that writes a row such an open transaction has
+// written fails with a write-write conflict and is not run again: Expire and
+// Persist update the rkey row, and Delete removes it and, through ON DELETE
+// CASCADE, the key's value rows. Through Atomic the call is run again, as
+// those writes are.
 type DB struct {
-	db Querier
+	db store.Store
 }
 
 // New creates a new key repository.
-func New(db Querier) *DB {
+func New(db store.Store) *DB {
 	return &DB{db: db}
 }
 
@@ -109,23 +123,23 @@ func (d *DB) Exists(keys ...string) (int, error) {
 
 // Delete removes keys.
 func (d *DB) Delete(keys ...string) (int, error) {
-	return del(d.db, keys...)
+	return store.Do(d.db, func(tx *sql.Tx) (int, error) { return del(tx, keys...) })
 }
 
 // Expire sets a TTL on a key.
 func (d *DB) Expire(key string, ttl time.Duration) (bool, error) {
 	etime := time.Now().Add(ttl).UnixMilli()
-	return expire(d.db, key, etime)
+	return store.Do(d.db, func(tx *sql.Tx) (bool, error) { return expire(tx, key, etime) })
 }
 
 // ExpireAt sets an absolute expiration time.
 func (d *DB) ExpireAt(key string, at time.Time) (bool, error) {
-	return expire(d.db, key, at.UnixMilli())
+	return store.Do(d.db, func(tx *sql.Tx) (bool, error) { return expire(tx, key, at.UnixMilli()) })
 }
 
 // Persist removes the expiration from a key.
 func (d *DB) Persist(key string) (bool, error) {
-	return persist(d.db, key)
+	return store.Do(d.db, func(tx *sql.Tx) (bool, error) { return persist(tx, key) })
 }
 
 // Keys returns all keys matching a pattern.

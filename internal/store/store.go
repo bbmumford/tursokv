@@ -1,16 +1,17 @@
 // Package store is what the tursokv repositories' DB-path methods run on.
 //
-// WHAT CONSUMES IT: New in internal/rstring, rhash, rlist, rset and rzset,
-// which take a Store, and their DB methods, which run every call of more than
-// one statement through Store.Atomic, directly or through Do. WHAT IT
-// CONSUMES: *sqlx.DB, the Store tursokv.Open passes to every repository.
+// WHAT CONSUMES IT: New in internal/rkey, rstring, rhash, rlist, rset and
+// rzset, which take a Store, and their DB methods, which run every call that
+// writes with more than one statement, and every rkey write, through
+// Store.Atomic, directly or through Do. WHAT IT CONSUMES: *sqlx.DB, the Store
+// tursokv.Open passes to every repository.
 package store
 
 import "database/sql"
 
 // Store runs a single statement in autocommit through Exec, Query and
-// QueryRow, and a call made of several statements through Atomic, which
-// commits them together and runs the call again when the engine reports a
+// QueryRow, and a call that writes through Atomic, which commits its
+// statements together and runs the call again when the engine reports a
 // write-write conflict.
 type Store interface {
 	Exec(query string, args ...any) (sql.Result, error)

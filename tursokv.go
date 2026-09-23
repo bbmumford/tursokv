@@ -112,10 +112,11 @@ const (
 	// begins every Update with BEGIN CONCURRENT on a multi-connection pool.
 	// An Update that writes a row another open transaction has written fails
 	// and keeps none of its writes; the caller decides whether to retry. A
-	// call made outside Update, such as db.Str().Set, runs as one
-	// transaction and is run again after a short wait when it meets such a
-	// conflict, a bounded number of times; when the conflict outlasts those
-	// runs the call returns it and keeps none of its writes.
+	// call made outside Update that writes, such as db.Str().Set or
+	// db.Key().Expire, runs as one transaction and is run again after a
+	// short wait when it meets such a conflict, a bounded number of times;
+	// when the conflict outlasts those runs the call returns it and keeps
+	// none of its writes.
 	WriteModeConcurrent = sqlx.WriteModeConcurrent
 
 	// WriteModeSerial begins every Update with BEGIN on a single connection,

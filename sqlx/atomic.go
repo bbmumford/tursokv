@@ -17,8 +17,9 @@ import (
 //
 // WHAT CONSUMES IT: the DB-path methods of the repositories in
 // internal/rstring, rhash, rlist, rset and rzset that write with more than
-// one statement, directly or through internal/store.Do; *DB is the
-// store.Store tursokv.Open hands each repository.
+// one statement, and the writes of internal/rkey, directly or through
+// internal/store.Do; *DB is the store.Store tursokv.Open hands each
+// repository.
 //
 // CONDITIONS. fn must be safe to run more than once: every statement goes
 // through tx, and results are assigned inside fn, so the run that commits
