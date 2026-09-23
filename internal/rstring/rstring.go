@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/bbmumford/tursokv/internal/rkey"
+	"github.com/bbmumford/tursokv/internal/store"
 )
 
 // Querier interface for database operations.
@@ -32,14 +33,17 @@ type SetOptions struct {
 	GetOld bool
 }
 
-// DB is the string repository for non-transactional operations.
+// DB is the string repository for calls made outside Update. A call that
+// writes with more than one statement runs through db.Atomic, so it keeps
+// all of its writes or none; every other call runs each statement in
+// autocommit.
 type DB struct {
-	db    Querier
+	db    store.Store
 	keyDB *rkey.DB
 }
 
 // New creates a new string repository.
-func New(db Querier, keyDB *rkey.DB) *DB {
+func New(db store.Store, keyDB *rkey.DB) *DB {
 	return &DB{db: db, keyDB: keyDB}
 }
 
@@ -56,22 +60,22 @@ func (d *DB) GetBytes(key string) ([]byte, error) {
 
 // Set sets the value of a key.
 func (d *DB) Set(key, value string) error {
-	return setString(d.db, key, value, nil)
+	return d.db.Atomic(func(tx *sql.Tx) error { return setString(tx, key, value, nil) })
 }
 
 // SetBytes sets the value of a key as bytes.
 func (d *DB) SetBytes(key string, value []byte) error {
-	return setBytes(d.db, key, value, nil)
+	return d.db.Atomic(func(tx *sql.Tx) error { return setBytes(tx, key, value, nil) })
 }
 
 // SetEx sets the value with a TTL.
 func (d *DB) SetEx(key, value string, ttl time.Duration) error {
-	return setString(d.db, key, value, &SetOptions{TTL: ttl})
+	return d.db.Atomic(func(tx *sql.Tx) error { return setString(tx, key, value, &SetOptions{TTL: ttl}) })
 }
 
 // SetNX sets the value only if the key doesn't exist.
 func (d *DB) SetNX(key, value string) (bool, error) {
-	return setNX(d.db, key, value)
+	return store.Do(d.db, func(tx *sql.Tx) (bool, error) { return setNX(tx, key, value) })
 }
 
 // MGet retrieves multiple keys.
@@ -81,27 +85,27 @@ func (d *DB) MGet(keys ...string) ([]string, error) {
 
 // MSet sets multiple key-value pairs.
 func (d *DB) MSet(pairs map[string]string) error {
-	return mset(d.db, pairs)
+	return d.db.Atomic(func(tx *sql.Tx) error { return mset(tx, pairs) })
 }
 
 // Incr increments the integer value of a key by 1.
 func (d *DB) Incr(key string) (int64, error) {
-	return incrBy(d.db, key, 1)
+	return d.IncrBy(key, 1)
 }
 
 // IncrBy increments the integer value of a key by delta.
 func (d *DB) IncrBy(key string, delta int64) (int64, error) {
-	return incrBy(d.db, key, delta)
+	return store.Do(d.db, func(tx *sql.Tx) (int64, error) { return incrBy(tx, key, delta) })
 }
 
 // Decr decrements the integer value of a key by 1.
 func (d *DB) Decr(key string) (int64, error) {
-	return incrBy(d.db, key, -1)
+	return d.IncrBy(key, -1)
 }
 
 // Append appends a value to the key.
 func (d *DB) Append(key, value string) (int, error) {
-	return appendStr(d.db, key, value)
+	return store.Do(d.db, func(tx *sql.Tx) (int, error) { return appendStr(tx, key, value) })
 }
 
 // Strlen returns the length of the value stored at key.

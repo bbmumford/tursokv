@@ -6,6 +6,7 @@ import (
 	"database/sql"
 
 	"github.com/bbmumford/tursokv/internal/rkey"
+	"github.com/bbmumford/tursokv/internal/store"
 )
 
 // Querier interface for database operations.
@@ -15,14 +16,17 @@ type Querier interface {
 	QueryRow(query string, args ...any) *sql.Row
 }
 
-// DB is the hash repository for non-transactional operations.
+// DB is the hash repository for calls made outside Update. A call that
+// writes with more than one statement runs through db.Atomic, so it keeps
+// all of its writes or none; every other call runs each statement in
+// autocommit.
 type DB struct {
-	db    Querier
+	db    store.Store
 	keyDB *rkey.DB
 }
 
 // New creates a new hash repository.
-func New(db Querier, keyDB *rkey.DB) *DB {
+func New(db store.Store, keyDB *rkey.DB) *DB {
 	return &DB{db: db, keyDB: keyDB}
 }
 
@@ -40,17 +44,17 @@ func (d *DB) GetBytes(key, field string) ([]byte, error) {
 // Set sets the value of a field in a hash.
 // Returns true if field is new, false if updated.
 func (d *DB) Set(key, field, value string) (bool, error) {
-	return hset(d.db, key, field, value)
+	return store.Do(d.db, func(tx *sql.Tx) (bool, error) { return hset(tx, key, field, value) })
 }
 
 // SetBytes sets the value of a field as bytes.
 func (d *DB) SetBytes(key, field string, value []byte) (bool, error) {
-	return hsetBytes(d.db, key, field, value)
+	return store.Do(d.db, func(tx *sql.Tx) (bool, error) { return hsetBytes(tx, key, field, value) })
 }
 
 // SetNX sets the value only if the field doesn't exist.
 func (d *DB) SetNX(key, field, value string) (bool, error) {
-	return hsetnx(d.db, key, field, value)
+	return store.Do(d.db, func(tx *sql.Tx) (bool, error) { return hsetnx(tx, key, field, value) })
 }
 
 // MGet retrieves multiple fields from a hash.
@@ -60,13 +64,13 @@ func (d *DB) MGet(key string, fields ...string) ([]string, error) {
 
 // MSet sets multiple fields in a hash.
 func (d *DB) MSet(key string, pairs map[string]string) error {
-	return hmset(d.db, key, pairs)
+	return d.db.Atomic(func(tx *sql.Tx) error { return hmset(tx, key, pairs) })
 }
 
 // Del deletes fields from a hash.
 // Returns the number of fields deleted.
 func (d *DB) Del(key string, fields ...string) (int, error) {
-	return hdel(d.db, key, fields...)
+	return store.Do(d.db, func(tx *sql.Tx) (int, error) { return hdel(tx, key, fields...) })
 }
 
 // Exists checks if a field exists in a hash.
@@ -96,10 +100,10 @@ func (d *DB) Len(key string) (int, error) {
 
 // IncrBy increments the integer value of a field.
 func (d *DB) IncrBy(key, field string, delta int64) (int64, error) {
-	return hincrby(d.db, key, field, delta)
+	return store.Do(d.db, func(tx *sql.Tx) (int64, error) { return hincrby(tx, key, field, delta) })
 }
 
 // IncrByFloat increments the float value of a field.
 func (d *DB) IncrByFloat(key, field string, delta float64) (float64, error) {
-	return hincrbyfloat(d.db, key, field, delta)
+	return store.Do(d.db, func(tx *sql.Tx) (float64, error) { return hincrbyfloat(tx, key, field, delta) })
 }

@@ -95,7 +95,9 @@ The zero value, `WriteModeAuto`, resolves to `WriteModeConcurrent` for a local f
 
 `Open` sets the journal mode on every open and reads it back, so a file can move between modes across opens.
 
-In `WriteModeConcurrent`, an `Update` whose transaction writes a row that another open transaction has already written fails with a write-write conflict. None of its writes are kept, and the caller decides whether to retry. Writes outside `Update` (the non-transactional calls such as `db.Str().Set`) are serialised against each other by the engine, but one that writes a row an open `Update` has already written fails with the same write-write conflict.
+In `WriteModeConcurrent`, an `Update` whose transaction writes a row that another open transaction has already written fails with a write-write conflict. None of its writes are kept, and the caller decides whether to retry.
+
+Each call made outside `Update` (such as `db.Str().Set`, `db.List().LPop` or `db.Set().Move`) runs as one transaction, so a call that issues several statements keeps all of its writes or none of them, in either write mode. In `WriteModeConcurrent`, a call that meets a write-write conflict, whether with another call or with an open `Update`, is run again in a fresh transaction after a short, jittered, growing wait, up to 64 runs in all. A call that reads and then writes, such as `Incr`, `SetNX` or a pop, therefore fails and runs again instead of writing over a change made since it read: in the package tests, eight goroutines incrementing one counter 25 times each end at 200, eight `SetNX` calls on one new key have exactly one winner, and concurrent pops never return the same member twice. When the conflict outlasts those runs (for example, an `Update` holds the row for longer than about 0.2 to 0.4 seconds), the call returns the conflict error and keeps none of its writes. Calls that only read, such as `MGet` or `LRange`, run each of their statements on its own, so one call of several statements can read values committed at different moments.
 
 ```go
 db, err := tursokv.Open("./data.db", &tursokv.Options{

@@ -7,6 +7,7 @@ import (
 	"math"
 
 	"github.com/bbmumford/tursokv/internal/rkey"
+	"github.com/bbmumford/tursokv/internal/store"
 )
 
 // Querier interface for database operations.
@@ -36,31 +37,34 @@ type ZAddOptions struct {
 	CH bool
 }
 
-// DB is the sorted set repository for non-transactional operations.
+// DB is the sorted set repository for calls made outside Update. A call that
+// writes with more than one statement runs through db.Atomic, so it keeps
+// all of its writes or none; every other call runs each statement in
+// autocommit.
 type DB struct {
-	db    Querier
+	db    store.Store
 	keyDB *rkey.DB
 }
 
 // New creates a new sorted set repository.
-func New(db Querier, keyDB *rkey.DB) *DB {
+func New(db store.Store, keyDB *rkey.DB) *DB {
 	return &DB{db: db, keyDB: keyDB}
 }
 
 // Add adds members with scores to a sorted set.
 // Returns the number of new members added.
 func (d *DB) Add(key string, members ...ScoreMember) (int, error) {
-	return zadd(d.db, key, nil, members...)
+	return store.Do(d.db, func(tx *sql.Tx) (int, error) { return zadd(tx, key, nil, members...) })
 }
 
 // AddWithOptions adds members with options.
 func (d *DB) AddWithOptions(key string, opts *ZAddOptions, members ...ScoreMember) (int, error) {
-	return zadd(d.db, key, opts, members...)
+	return store.Do(d.db, func(tx *sql.Tx) (int, error) { return zadd(tx, key, opts, members...) })
 }
 
 // Remove removes members from a sorted set.
 func (d *DB) Remove(key string, members ...string) (int, error) {
-	return zrem(d.db, key, members...)
+	return store.Do(d.db, func(tx *sql.Tx) (int, error) { return zrem(tx, key, members...) })
 }
 
 // Score returns the score of a member.
@@ -120,27 +124,44 @@ func (d *DB) RangeByScoreWithLimit(key string, min, max float64, offset, count i
 
 // IncrBy increments the score of a member.
 func (d *DB) IncrBy(key, member string, delta float64) (float64, error) {
-	return zincrby(d.db, key, member, delta)
+	return store.Do(d.db, func(tx *sql.Tx) (float64, error) { return zincrby(tx, key, member, delta) })
 }
 
 // PopMin removes and returns the member with lowest score.
 func (d *DB) PopMin(key string) (ScoreMember, bool, error) {
-	return zpopmin(d.db, key)
+	return d.pop(key, zpopmin)
 }
 
 // PopMax removes and returns the member with highest score.
 func (d *DB) PopMax(key string) (ScoreMember, bool, error) {
-	return zpopmax(d.db, key)
+	return d.pop(key, zpopmax)
+}
+
+// popped carries a pop's two results out of store.Do.
+type popped struct {
+	member ScoreMember
+	found  bool
+}
+
+// pop runs zpopmin or zpopmax in one transaction: the read that picks the
+// member and the delete that removes it commit together, so two callers
+// cannot both pop the same member.
+func (d *DB) pop(key string, fn func(Querier, string) (ScoreMember, bool, error)) (ScoreMember, bool, error) {
+	r, err := store.Do(d.db, func(tx *sql.Tx) (popped, error) {
+		m, found, err := fn(tx, key)
+		return popped{m, found}, err
+	})
+	return r.member, r.found, err
 }
 
 // RemRangeByRank removes members by rank range.
 func (d *DB) RemRangeByRank(key string, start, stop int) (int, error) {
-	return zremrangebyrank(d.db, key, start, stop)
+	return store.Do(d.db, func(tx *sql.Tx) (int, error) { return zremrangebyrank(tx, key, start, stop) })
 }
 
 // RemRangeByScore removes members by score range.
 func (d *DB) RemRangeByScore(key string, min, max float64) (int, error) {
-	return zremrangebyscore(d.db, key, min, max)
+	return store.Do(d.db, func(tx *sql.Tx) (int, error) { return zremrangebyscore(tx, key, min, max) })
 }
 
 // NegInf represents negative infinity for score ranges.

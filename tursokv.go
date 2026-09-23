@@ -111,8 +111,11 @@ const (
 	// WriteModeConcurrent runs a local file in the MVCC journal mode and
 	// begins every Update with BEGIN CONCURRENT on a multi-connection pool.
 	// An Update that writes a row another open transaction has written fails
-	// and keeps none of its writes; a write outside Update to such a row fails
-	// the same way.
+	// and keeps none of its writes; the caller decides whether to retry. A
+	// call made outside Update, such as db.Str().Set, runs as one
+	// transaction and is run again after a short wait when it meets such a
+	// conflict, a bounded number of times; when the conflict outlasts those
+	// runs the call returns it and keeps none of its writes.
 	WriteModeConcurrent = sqlx.WriteModeConcurrent
 
 	// WriteModeSerial begins every Update with BEGIN on a single connection,
