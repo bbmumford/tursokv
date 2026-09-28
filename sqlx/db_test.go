@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -218,6 +219,67 @@ func TestWritesAfterUpdateSurviveReopen(t *testing.T) {
 	}
 	if n != total {
 		t.Fatalf("rows after reopen = %d, want %d", n, total)
+	}
+}
+
+// TestOpenRefusesOptionsItCannotApply gives Open each ReadOnly or Cipher
+// setting it cannot apply: Open returns that setting's error and never creates
+// the database's directory. The Cipher it applies opens: a file written under
+// Cipher "aes256gcm" and a key reads back with the key and does not open
+// without it.
+func TestOpenRefusesOptionsItCannotApply(t *testing.T) {
+	const key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	cases := []struct {
+		name string
+		opts Options
+		want error
+	}{
+		{"read-only", Options{ReadOnly: true}, ErrReadOnlyUnsupported},
+		{"read-only with the local cipher and a key", Options{ReadOnly: true, EncryptionKey: key, Cipher: localCipher}, ErrReadOnlyUnsupported},
+		{"another cipher with a key", Options{EncryptionKey: key, Cipher: "aegis256"}, ErrUnsupportedCipher},
+		{"another cipher without a key", Options{Cipher: "aegis256"}, ErrUnsupportedCipher},
+		{"the local cipher without a key", Options{Cipher: localCipher}, ErrCipherWithoutKey},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "never-created")
+			db, err := Open(filepath.Join(dir, "kv.db"), &tc.opts)
+			if err == nil {
+				db.Close()
+			}
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("Open: err = %v, want %v", err, tc.want)
+			}
+			if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("the refused Open created %s (stat err %v)", dir, err)
+			}
+		})
+	}
+
+	path := filepath.Join(t.TempDir(), "cipher.db")
+	opts := &Options{EncryptionKey: key, Cipher: localCipher}
+	db, err := Open(path, opts)
+	if err != nil {
+		t.Fatalf("Open with the local cipher and a key: %v", err)
+	}
+	if _, err := db.Exec("INSERT INTO rkey (key, type) VALUES ('kept', 1)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if plain, err := Open(path, nil); err == nil {
+		plain.Close()
+		t.Fatal("the file written under Cipher and a key opened without the key")
+	}
+	db, err = Open(path, opts)
+	if err != nil {
+		t.Fatalf("reopen with the key: %v", err)
+	}
+	defer db.Close()
+	var n int
+	if err := db.QueryRow("SELECT COUNT(*) FROM rkey WHERE key = 'kept'").Scan(&n); err != nil || n != 1 {
+		t.Fatalf("rows after reopen = %d, %v; want 1", n, err)
 	}
 }
 

@@ -40,9 +40,12 @@ type Options struct {
 	// only as long as their one connection.
 	Timeout time.Duration
 
-	// ReadOnly is accepted for configuration compatibility.
-	// TODO: apply it; the driver has no read-only open mode, so enforcing it
-	// needs PRAGMA query_only proved on every connection.
+	// ReadOnly asks for a database that refuses writes. Open refuses it,
+	// returning ErrReadOnlyUnsupported before it touches the file system,
+	// because every open writes: openOn sets the journal mode and creates the
+	// schema through ApplySchema, and the driver has no read-only open mode.
+	// TODO: apply it: skip those writes, set PRAGMA query_only on every
+	// connection and prove it there, and refuse statements that turn it off.
 	ReadOnly bool
 
 	// SyncURL is the remote for an embedded replica, for example
@@ -56,6 +59,14 @@ type Options struct {
 	// local file. Open refuses it together with SyncURL, returning
 	// ErrEncryptionWithSync.
 	EncryptionKey string
+
+	// Cipher names the cipher EncryptionKey encrypts a local file with.
+	// Empty and "aes256gcm" both select AES-256-GCM, the one cipher
+	// buildLocalDSN hands the engine. Open refuses any other name, returning
+	// ErrUnsupportedCipher, and a Cipher given without EncryptionKey,
+	// returning ErrCipherWithoutKey: either would store the file under a
+	// cipher other than the one named, or unencrypted.
+	Cipher string
 
 	// WriteMode selects how writes are taken; see WriteMode. The zero value
 	// resolves by database kind.
@@ -76,6 +87,22 @@ type Options struct {
 // returns it before it creates a directory or file or contacts the remote.
 var ErrEncryptionWithSync = errors.New("sqlx: EncryptionKey cannot be used with SyncURL: the sync engine takes no encryption settings, so the replica would be stored unencrypted")
 
+// ErrUnsupportedCipher, ErrCipherWithoutKey and ErrReadOnlyUnsupported are
+// what Open returns for an Options field it cannot apply as asked, before it
+// creates a directory or file or contacts a remote. Each names a setting that
+// would otherwise be accepted and ignored, leaving a caller that set it with
+// a database other than the one it configured.
+var (
+	ErrUnsupportedCipher   = errors.New("sqlx: Cipher must be empty or " + localCipher + ", the cipher local files are encrypted with")
+	ErrCipherWithoutKey    = errors.New("sqlx: Cipher needs EncryptionKey: without a key the file would be stored unencrypted")
+	ErrReadOnlyUnsupported = errors.New("sqlx: ReadOnly is not supported: Open writes the journal mode and the schema, and the driver has no read-only open mode")
+)
+
+// localCipher is the engine's name for the cipher buildLocalDSN encrypts a
+// local file with, and the one Options.Cipher value besides empty that Open
+// accepts.
+const localCipher = "aes256gcm"
+
 // DB is a TursoKV database: a policy-proved connection pool plus, for an
 // embedded replica, the sync engine it pushes and pulls through.
 type DB struct {
@@ -94,7 +121,9 @@ type DB struct {
 // Open opens a local, in-memory or synced database, establishes the write
 // mode, proves foreign keys on the first connection and creates the schema
 // through ApplySchema. It returns ErrEncryptionWithSync, before touching the
-// file system or the remote, when opts sets both EncryptionKey and SyncURL.
+// file system or the remote, when opts sets both EncryptionKey and SyncURL,
+// and at the same point ErrReadOnlyUnsupported, ErrUnsupportedCipher or
+// ErrCipherWithoutKey for a ReadOnly or Cipher it cannot apply.
 //
 // Examples:
 //
@@ -120,6 +149,9 @@ func open(path string, opts *Options, bootstrap bool) (*DB, error) {
 	synced := opts.SyncURL != ""
 	if synced && opts.EncryptionKey != "" {
 		return nil, ErrEncryptionWithSync
+	}
+	if err := refuseUnapplied(opts); err != nil {
+		return nil, err
 	}
 	mode, err := resolveWriteMode(opts.WriteMode, memory, synced)
 	if err != nil {
@@ -156,6 +188,27 @@ func open(path string, opts *Options, bootstrap bool) (*DB, error) {
 		sdb.startSync(opts.SyncInterval, opts.SyncErrors)
 	}
 	return sdb, nil
+}
+
+// refuseUnapplied returns the error for the first setting in opts that open
+// cannot apply as asked, and nil when every setting applies.
+//
+// WHAT CONSUMES IT: open, after its refusal of a key with a SyncURL and
+// before anything touches the file system.
+//
+// CONDITIONS. ReadOnly is refused whatever else is set. A Cipher is checked by
+// name first, then against EncryptionKey, because a name the engine is never
+// given is wrong with or without a key.
+func refuseUnapplied(opts *Options) error {
+	switch {
+	case opts.ReadOnly:
+		return ErrReadOnlyUnsupported
+	case opts.Cipher != "" && opts.Cipher != localCipher:
+		return ErrUnsupportedCipher
+	case opts.Cipher != "" && opts.EncryptionKey == "":
+		return ErrCipherWithoutKey
+	}
+	return nil
 }
 
 // openOn builds a DB on an engine connector: the policy-proved pool, the
@@ -236,7 +289,7 @@ func buildLocalDSN(path, encryptionHexKey string) string {
 	q := url.Values{}
 	if encryptionHexKey != "" {
 		features = append(features, "encryption")
-		q.Set("encryption_cipher", "aes256gcm")
+		q.Set("encryption_cipher", localCipher)
 		q.Set("encryption_hexkey", encryptionHexKey)
 	}
 	q.Set("experimental", strings.Join(features, ","))

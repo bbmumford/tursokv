@@ -205,7 +205,7 @@ db, err := tursokv.Open("./data.db", &tursokv.Options{
 })
 ```
 
-`Open` reads `opts` and never modifies it. `ReadOnly` and `Cipher` are accepted but not applied yet: the engine has no read-only open mode, and local encryption always uses AES-256-GCM.
+`Open` reads `opts` and never modifies it. It refuses `ReadOnly`, returning `tursokv.ErrReadOnlyUnsupported`: every open writes the journal mode and the schema, and the engine has no read-only open mode. `Cipher` may be empty or `"aes256gcm"`, the one cipher local files are encrypted with; any other name returns `tursokv.ErrUnsupportedCipher`, and a `Cipher` without `EncryptionKey` returns `tursokv.ErrCipherWithoutKey`. Each refusal comes before `Open` creates a directory or file or contacts the remote.
 
 ### Direct SQL
 

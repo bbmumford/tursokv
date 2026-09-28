@@ -66,9 +66,10 @@ type Options struct {
 	// Logger receives background sync failures. Default: silent logger.
 	Logger *slog.Logger
 
-	// ReadOnly is accepted for configuration compatibility.
-	// TODO: apply it; the driver has no read-only open mode, so enforcing it
-	// needs PRAGMA query_only proved on every connection.
+	// ReadOnly asks for a database that refuses writes. Open refuses it,
+	// returning ErrReadOnlyUnsupported before it creates a directory or file,
+	// because every open writes the journal mode and the schema and the
+	// driver has no read-only open mode (sqlx.Options.ReadOnly).
 	ReadOnly bool
 
 	// --- Turso-specific options ---
@@ -90,8 +91,10 @@ type Options struct {
 	// together with SyncURL, returning ErrEncryptionWithSync.
 	EncryptionKey string
 
-	// Cipher is accepted for configuration compatibility.
-	// TODO: apply it; local encryption uses aes256gcm whatever this holds.
+	// Cipher names the cipher EncryptionKey encrypts the local file with:
+	// empty or "aes256gcm", both AES-256-GCM. Open refuses any other name,
+	// returning ErrUnsupportedCipher, and a Cipher without EncryptionKey,
+	// returning ErrCipherWithoutKey.
 	Cipher string
 
 	// WriteMode selects how writes are taken. The zero value, WriteModeAuto,
@@ -128,6 +131,16 @@ const (
 // EncryptionKey and SyncURL: the sync engine takes no encryption settings, so
 // the replica would hold in plaintext data the caller asked to have encrypted.
 var ErrEncryptionWithSync = sqlx.ErrEncryptionWithSync
+
+// ErrReadOnlyUnsupported, ErrUnsupportedCipher and ErrCipherWithoutKey are
+// what Open returns, before it creates a directory or file or contacts a
+// remote, for a ReadOnly or Cipher it cannot apply as asked. They are the
+// connection layer's errors, so errors.Is matches either name.
+var (
+	ErrReadOnlyUnsupported = sqlx.ErrReadOnlyUnsupported
+	ErrUnsupportedCipher   = sqlx.ErrUnsupportedCipher
+	ErrCipherWithoutKey    = sqlx.ErrCipherWithoutKey
+)
 
 // defaultSyncInterval is the background sync period when SyncInterval is zero.
 const defaultSyncInterval = time.Minute
@@ -318,7 +331,8 @@ func (db *DB) Checkpoint(ctx context.Context) error {
 
 // connectionOptions maps merged Options onto the connection layer: a negative
 // SyncInterval becomes zero, which runs no background loop, and background
-// sync failures go to the Logger.
+// sync failures go to the Logger. ReadOnly and Cipher pass through as given,
+// because the connection layer is what refuses the ones it cannot apply.
 func connectionOptions(o Options) *sqlx.Options {
 	logger := o.Logger
 	return &sqlx.Options{
@@ -327,6 +341,7 @@ func connectionOptions(o Options) *sqlx.Options {
 		SyncURL:       o.SyncURL,
 		AuthToken:     o.AuthToken,
 		EncryptionKey: o.EncryptionKey,
+		Cipher:        o.Cipher,
 		WriteMode:     o.WriteMode,
 		SyncInterval:  max(o.SyncInterval, 0),
 		SyncErrors: func(err error) {

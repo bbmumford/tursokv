@@ -88,3 +88,57 @@ func TestOpenRefusesEncryptionKeyWithSyncURL(t *testing.T) {
 		t.Fatalf("Get after reopen = %q, %v; want \"kept\"", got, err)
 	}
 }
+
+// TestOpenRefusesReadOnlyAndCiphersItCannotApply opens through this package's
+// Open, so ReadOnly and Cipher reach the connection layer only through
+// connectionOptions. Each setting the connection layer cannot apply is
+// refused with this package's error, and the one Cipher it applies, given
+// with a key, encrypts the file.
+func TestOpenRefusesReadOnlyAndCiphersItCannotApply(t *testing.T) {
+	const key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	cases := []struct {
+		name string
+		opts Options
+		want error
+	}{
+		{"read-only", Options{ReadOnly: true}, ErrReadOnlyUnsupported},
+		{"another cipher with a key", Options{EncryptionKey: key, Cipher: "aegis256"}, ErrUnsupportedCipher},
+		{"the local cipher without a key", Options{Cipher: "aes256gcm"}, ErrCipherWithoutKey},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, err := Open(filepath.Join(t.TempDir(), "kv.db"), &tc.opts)
+			if err == nil {
+				db.Close()
+			}
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("Open: err = %v, want %v", err, tc.want)
+			}
+		})
+	}
+
+	path := filepath.Join(t.TempDir(), "cipher.db")
+	opts := &Options{EncryptionKey: key, Cipher: "aes256gcm"}
+	db, err := Open(path, opts)
+	if err != nil {
+		t.Fatalf("Open with the local cipher and a key: %v", err)
+	}
+	if err := db.Str().Set("secret", "kept"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if db, err := Open(path, nil); err == nil {
+		db.Close()
+		t.Fatal("the file written under Cipher and a key opened without the key")
+	}
+	db, err = Open(path, opts)
+	if err != nil {
+		t.Fatalf("reopen with the key: %v", err)
+	}
+	defer db.Close()
+	if got, err := db.Str().Get("secret"); err != nil || got != "kept" {
+		t.Fatalf("Get after reopen = %q, %v; want \"kept\"", got, err)
+	}
+}
