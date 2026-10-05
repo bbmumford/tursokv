@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -449,5 +451,41 @@ func awaitFirstWrite(t *testing.T, wrote <-chan struct{}, done <-chan error) {
 		t.Fatalf("first Update ended before writing: %v", err)
 	case <-time.After(10 * time.Second):
 		t.Fatal("first Update neither wrote nor ended")
+	}
+}
+
+// TestTheAcceptedCipherIsTheOneTheDSNCarries reads the cipher name out of a
+// keyed DSN and requires refuseUnapplied to accept exactly that name.
+//
+// WHAT IT CONSUMES: buildLocalDSN's keyed DSN and refuseUnapplied's verdict on
+// an Options carrying the name that DSN holds.
+//
+// WHY THIS SHAPE. ErrUnsupportedCipher refuses a Cipher the engine is never
+// given, so the name Open accepts has to be the name buildLocalDSN sets in
+// encryption_cipher. Both read localCipher today; a literal in either place
+// would let Open accept a name it does not apply and store the file under
+// another cipher, which is the condition this refusal exists to stop.
+func TestTheAcceptedCipherIsTheOneTheDSNCarries(t *testing.T) {
+	const key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	dsn := buildLocalDSN(filepath.Join(t.TempDir(), "cipher.db"), key)
+	_, query, ok := strings.Cut(dsn, "?")
+	if !ok {
+		t.Fatalf("the keyed DSN %q carries no query", dsn)
+	}
+	values, err := url.ParseQuery(query)
+	if err != nil {
+		t.Fatalf("parse the keyed DSN's query %q: %v", query, err)
+	}
+	applied := values.Get("encryption_cipher")
+	if applied == "" {
+		t.Fatalf("the keyed DSN %q names no cipher", dsn)
+	}
+	if err := refuseUnapplied(&Options{EncryptionKey: key, Cipher: applied}); err != nil {
+		t.Fatalf("Open refuses Cipher %q, which the keyed DSN applies: %v", applied, err)
+	}
+	for _, other := range []string{"aegis256", applied + "-x", applied + " ", strings.ToUpper(applied)} {
+		if !errors.Is(refuseUnapplied(&Options{EncryptionKey: key, Cipher: other}), ErrUnsupportedCipher) {
+			t.Fatalf("Open accepts Cipher %q, which the keyed DSN does not apply", other)
+		}
 	}
 }
