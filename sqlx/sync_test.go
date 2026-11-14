@@ -234,7 +234,7 @@ func TestSyncedReplicaEnforcesForeignKeys(t *testing.T) {
 	c.Close()
 
 	if err := db.Update(func(tx *sql.Tx) error {
-		_, err := tx.Exec("INSERT INTO rkey (key, type) VALUES ('k', 1); INSERT INTO rstring (key_id, value) VALUES (last_insert_rowid(), 'v')")
+		_, err := tx.Exec("INSERT INTO rkey (key, type) VALUES ('k', 1); INSERT INTO rstring (keyId, value) VALUES (last_insert_rowid(), 'v')")
 		return err
 	}); err != nil {
 		t.Fatalf("Update on replica: %v", err)

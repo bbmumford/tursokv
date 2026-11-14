@@ -339,14 +339,14 @@ The DDL is the `schema` constant in `sqlx/schema.go`. It creates:
 
 | Table | Holds | Primary key | Indexes |
 |-------|-------|-------------|---------|
-| `rkey` | One row per key: `key` (UNIQUE), `type` (1 string, 2 list, 3 set, 4 hash, 5 sorted set), `version`, `etime` (expiry in Unix ms, NULL for none), `mtime` (last write in Unix ms) | `id` | `rkey_etime` on `etime` where it is set; `rkey_type` on `type` |
-| `rstring` | A string key's `value` | `key_id` | none |
-| `rlist` | List elements, ordered by `pos`, a REAL so an element can go between two others | `(key_id, pos)` | `rlist_key` |
-| `rset` | Set members | `(key_id, member)` | `rset_key` |
-| `rhash` | Hash fields and values | `(key_id, field)` | `rhash_key` |
-| `rzset` | Sorted-set members and scores | `(key_id, member)` | `rzset_key`; `rzset_score` on `(key_id, score)` |
+| `rkey` | One row per key: `key` (UNIQUE), `type` (1 string, 2 list, 3 set, 4 hash, 5 sorted set), `version`, `etime` (expiry in Unix ms, NULL for none), `mtime` (last write in Unix ms) | `id` | `rkeyEtime` on `etime` where it is set; `rkeyType` on `type` |
+| `rstring` | A string key's `value` | `keyId` | none |
+| `rlist` | List elements, ordered by `pos`, a REAL so an element can go between two others | `(keyId, pos)` | `rlistKey` |
+| `rset` | Set members | `(keyId, member)` | `rsetKey` |
+| `rhash` | Hash fields and values | `(keyId, field)` | `rhashKey` |
+| `rzset` | Sorted-set members and scores | `(keyId, member)` | `rzsetKey`; `rzsetScore` on `(keyId, score)` |
 
-Every value table's `key_id` references `rkey(id) ON DELETE CASCADE`, so deleting a key deletes its values, but only on a connection with foreign keys on. A caller that applies the schema to its own `*sql.DB` must turn them on for every connection.
+Every value table's `keyId` references `rkey(id) ON DELETE CASCADE`, so deleting a key deletes its values, but only on a connection with foreign keys on. A caller that applies the schema to its own `*sql.DB` must turn them on for every connection.
 
 The engine opens every connection with foreign keys off, so a one-time `PRAGMA foreign_keys=ON` would reach only one connection of the pool. `tursokv` therefore opens every pool through `policypool` with `ForeignKeysRequired`. Each physical connection sets and reads back `PRAGMA foreign_keys` when it opens and again each time it is reused; a connection that cannot prove it is discarded. For a replica, whose pool tursogo builds internally, the pool is held to one connection and each connection is proved the same way.
 

@@ -104,15 +104,15 @@ func hsetBytesTx(db Querier, keyTx *rkey.Tx, key, field string, value []byte) (b
 	}
 
 	// Check if field exists
-	const checkField = `SELECT 1 FROM rhash WHERE key_id = ? AND field = ?`
+	const checkField = `SELECT 1 FROM rhash WHERE keyId = ? AND field = ?`
 	var exists int
 	isNew := db.QueryRow(checkField, k.ID, field).Scan(&exists) == sql.ErrNoRows
 
 	// Upsert field
 	const upsertField = `
-		INSERT INTO rhash (key_id, field, value)
+		INSERT INTO rhash (keyId, field, value)
 		VALUES (?, ?, ?)
-		ON CONFLICT(key_id, field) DO UPDATE SET value = excluded.value
+		ON CONFLICT(keyId, field) DO UPDATE SET value = excluded.value
 	`
 	_, err = db.Exec(upsertField, k.ID, field, value)
 	return isNew, err
@@ -155,7 +155,7 @@ func hdelTx(db Querier, keyTx *rkey.Tx, key string, fields ...string) (int, erro
 
 	deleted := 0
 	for _, field := range fields {
-		const delField = `DELETE FROM rhash WHERE key_id = ? AND field = ?`
+		const delField = `DELETE FROM rhash WHERE keyId = ? AND field = ?`
 		res, err := db.Exec(delField, k.ID, field)
 		if err != nil {
 			return deleted, err

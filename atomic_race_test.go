@@ -155,7 +155,7 @@ func TestParallelSetOfNewKeyCommitsOnce(t *testing.T) {
 		if err := db.SQL().QueryRow("SELECT COUNT(*) FROM rkey WHERE key = ?", key).Scan(&keys); err != nil {
 			t.Fatal(err)
 		}
-		if err := db.SQL().QueryRow("SELECT COUNT(*) FROM rstring s JOIN rkey k ON k.id = s.key_id WHERE k.key = ?", key).Scan(&values); err != nil {
+		if err := db.SQL().QueryRow("SELECT COUNT(*) FROM rstring s JOIN rkey k ON k.id = s.keyId WHERE k.key = ?", key).Scan(&values); err != nil {
 			t.Fatal(err)
 		}
 		if keys != 1 || values != 1 {

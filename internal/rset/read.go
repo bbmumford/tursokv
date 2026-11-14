@@ -24,7 +24,7 @@ func getKeyID(db Querier, key string) (int64, error) {
 func sismember(db Querier, key, member string) (bool, error) {
 	const query = `
 		SELECT 1 FROM rset s
-		JOIN rkey k ON k.id = s.key_id
+		JOIN rkey k ON k.id = s.keyId
 		WHERE k.key = ? AND k.type = ? AND s.member = ?
 		AND (k.etime IS NULL OR k.etime > ?)
 	`
@@ -40,7 +40,7 @@ func sismember(db Querier, key, member string) (bool, error) {
 func smembers(db Querier, key string) ([]string, error) {
 	const query = `
 		SELECT s.member FROM rset s
-		JOIN rkey k ON k.id = s.key_id
+		JOIN rkey k ON k.id = s.keyId
 		WHERE k.key = ? AND k.type = ?
 		AND (k.etime IS NULL OR k.etime > ?)
 	`
@@ -66,7 +66,7 @@ func smembers(db Querier, key string) ([]string, error) {
 func scard(db Querier, key string) (int, error) {
 	const query = `
 		SELECT COUNT(*) FROM rset s
-		JOIN rkey k ON k.id = s.key_id
+		JOIN rkey k ON k.id = s.keyId
 		WHERE k.key = ? AND k.type = ?
 		AND (k.etime IS NULL OR k.etime > ?)
 	`
@@ -91,7 +91,7 @@ func srandmembers(db Querier, key string, count int) ([]string, error) {
 
 	const query = `
 		SELECT s.member FROM rset s
-		JOIN rkey k ON k.id = s.key_id
+		JOIN rkey k ON k.id = s.keyId
 		WHERE k.key = ? AND k.type = ?
 		AND (k.etime IS NULL OR k.etime > ?)
 		ORDER BY RANDOM()

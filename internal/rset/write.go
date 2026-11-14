@@ -34,9 +34,9 @@ func sadd(db Querier, key string, members ...string) (int, error) {
 
 	added := 0
 	const insert = `
-		INSERT INTO rset (key_id, member)
+		INSERT INTO rset (keyId, member)
 		VALUES (?, ?)
-		ON CONFLICT(key_id, member) DO NOTHING
+		ON CONFLICT(keyId, member) DO NOTHING
 	`
 	for _, member := range members {
 		res, err := db.Exec(insert, keyID, []byte(member))
@@ -61,7 +61,7 @@ func srem(db Querier, key string, members ...string) (int, error) {
 	}
 
 	removed := 0
-	const del = `DELETE FROM rset WHERE key_id = ? AND member = ?`
+	const del = `DELETE FROM rset WHERE keyId = ? AND member = ?`
 	for _, member := range members {
 		res, err := db.Exec(del, keyID, []byte(member))
 		if err != nil {
@@ -83,7 +83,7 @@ func spop(db Querier, key string) (string, error) {
 	// Get a random member (SQLite's RANDOM() function)
 	const query = `
 		SELECT member FROM rset
-		WHERE key_id = ?
+		WHERE keyId = ?
 		ORDER BY RANDOM()
 		LIMIT 1
 	`
@@ -96,7 +96,7 @@ func spop(db Querier, key string) (string, error) {
 	}
 
 	// Delete the member
-	const del = `DELETE FROM rset WHERE key_id = ? AND member = ?`
+	const del = `DELETE FROM rset WHERE keyId = ? AND member = ?`
 	if _, err := db.Exec(del, keyID, member); err != nil {
 		return "", err
 	}
@@ -117,7 +117,7 @@ func smove(db Querier, src, dst, member string) (bool, error) {
 	}
 
 	// Remove from source
-	const del = `DELETE FROM rset WHERE key_id = ? AND member = ?`
+	const del = `DELETE FROM rset WHERE keyId = ? AND member = ?`
 	if _, err := db.Exec(del, srcID, []byte(member)); err != nil {
 		return false, err
 	}

@@ -31,14 +31,14 @@ func lindex(db Querier, key string, index int) (string, error) {
 	if index >= 0 {
 		query = `
 			SELECT value FROM rlist
-			WHERE key_id = ?
+			WHERE keyId = ?
 			ORDER BY pos ASC
 			LIMIT 1 OFFSET ?
 		`
 	} else {
 		query = `
 			SELECT value FROM rlist
-			WHERE key_id = ?
+			WHERE keyId = ?
 			ORDER BY pos DESC
 			LIMIT 1 OFFSET ?
 		`
@@ -90,7 +90,7 @@ func lrange(db Querier, key string, start, stop int) ([]string, error) {
 	limit := stop - start + 1
 	const query = `
 		SELECT value FROM rlist
-		WHERE key_id = ?
+		WHERE keyId = ?
 		ORDER BY pos ASC
 		LIMIT ? OFFSET ?
 	`
@@ -118,7 +118,7 @@ func llen(db Querier, key string) (int, error) {
 		return 0, err
 	}
 
-	const query = `SELECT COUNT(*) FROM rlist WHERE key_id = ?`
+	const query = `SELECT COUNT(*) FROM rlist WHERE keyId = ?`
 	var count int
 	err = db.QueryRow(query, keyID).Scan(&count)
 	return count, err

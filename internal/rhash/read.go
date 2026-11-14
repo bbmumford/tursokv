@@ -18,7 +18,7 @@ func hget(db Querier, key, field string) (string, error) {
 func hgetBytes(db Querier, key, field string) ([]byte, error) {
 	const query = `
 		SELECT h.value FROM rhash h
-		JOIN rkey k ON k.id = h.key_id
+		JOIN rkey k ON k.id = h.keyId
 		WHERE k.key = ? AND k.type = ? AND h.field = ?
 		AND (k.etime IS NULL OR k.etime > ?)
 	`
@@ -50,7 +50,7 @@ func hmget(db Querier, key string, fields ...string) ([]string, error) {
 func hexists(db Querier, key, field string) (bool, error) {
 	const query = `
 		SELECT 1 FROM rhash h
-		JOIN rkey k ON k.id = h.key_id
+		JOIN rkey k ON k.id = h.keyId
 		WHERE k.key = ? AND k.type = ? AND h.field = ?
 		AND (k.etime IS NULL OR k.etime > ?)
 	`
@@ -66,7 +66,7 @@ func hexists(db Querier, key, field string) (bool, error) {
 func hgetall(db Querier, key string) (map[string]string, error) {
 	const query = `
 		SELECT h.field, h.value FROM rhash h
-		JOIN rkey k ON k.id = h.key_id
+		JOIN rkey k ON k.id = h.keyId
 		WHERE k.key = ? AND k.type = ?
 		AND (k.etime IS NULL OR k.etime > ?)
 	`
@@ -92,7 +92,7 @@ func hgetall(db Querier, key string) (map[string]string, error) {
 func hkeys(db Querier, key string) ([]string, error) {
 	const query = `
 		SELECT h.field FROM rhash h
-		JOIN rkey k ON k.id = h.key_id
+		JOIN rkey k ON k.id = h.keyId
 		WHERE k.key = ? AND k.type = ?
 		AND (k.etime IS NULL OR k.etime > ?)
 	`
@@ -117,7 +117,7 @@ func hkeys(db Querier, key string) ([]string, error) {
 func hvals(db Querier, key string) ([]string, error) {
 	const query = `
 		SELECT h.value FROM rhash h
-		JOIN rkey k ON k.id = h.key_id
+		JOIN rkey k ON k.id = h.keyId
 		WHERE k.key = ? AND k.type = ?
 		AND (k.etime IS NULL OR k.etime > ?)
 	`
@@ -142,7 +142,7 @@ func hvals(db Querier, key string) ([]string, error) {
 func hlen(db Querier, key string) (int, error) {
 	const query = `
 		SELECT COUNT(*) FROM rhash h
-		JOIN rkey k ON k.id = h.key_id
+		JOIN rkey k ON k.id = h.keyId
 		WHERE k.key = ? AND k.type = ?
 		AND (k.etime IS NULL OR k.etime > ?)
 	`

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -25,8 +26,8 @@ func TestApplySchemaOnCallersDB(t *testing.T) {
 	}
 	first := schemaObjects(t, raw)
 	want := []string{
-		"index rhash_key", "index rkey_etime", "index rkey_type", "index rlist_key",
-		"index rset_key", "index rzset_key", "index rzset_score",
+		"index rhashKey", "index rkeyEtime", "index rkeyType", "index rlistKey",
+		"index rsetKey", "index rzsetKey", "index rzsetScore",
 		"table rhash", "table rkey", "table rlist", "table rset", "table rstring", "table rzset",
 	}
 	var got []string
@@ -76,10 +77,18 @@ func openDriverDB(t *testing.T, name string) *sql.DB {
 	return db
 }
 
+// declaredName reads the name a CREATE statement gives its object, as written.
+var declaredName = regexp.MustCompile(`(?is)^\s*CREATE\s+(?:UNIQUE\s+)?(?:TABLE|INDEX|TRIGGER|VIEW)\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)`)
+
 // schemaObjects lists db's tables, indexes, triggers and views, ordered by
 // type and name. It leaves out the engine's own objects: the sqlite_ ones and
 // the __turso_internal_ table the engine adds to a file in the MVCC journal
-// mode, which Open sets for WriteModeConcurrent.
+// mode, which Open sets for WriteModeConcurrent. Each Name is the spelling the
+// object's CREATE statement declares: the tursogo engine records a table,
+// index or trigger name lower-cased in sqlite_schema's name column and keeps
+// the statement as written in its sql column, and an identifier differing
+// only in case names the same object, so the declared spelling is the one a
+// reader compares against the schema.
 func schemaObjects(t *testing.T, db *sql.DB) []schemaObject {
 	t.Helper()
 	rows, err := db.Query("SELECT type, name, sql FROM sqlite_schema ORDER BY type, name")
@@ -98,6 +107,9 @@ func schemaObjects(t *testing.T, db *sql.DB) []schemaObject {
 			continue
 		}
 		o.SQL = ddl.String
+		if m := declaredName.FindStringSubmatch(o.SQL); m != nil && strings.EqualFold(m[1], o.Name) {
+			o.Name = m[1]
+		}
 		objs = append(objs, o)
 	}
 	if err := rows.Err(); err != nil {

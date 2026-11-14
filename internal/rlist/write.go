@@ -24,7 +24,7 @@ func getOrCreateKey(db Querier, key string) (int64, error) {
 }
 
 func getMinPos(db Querier, keyID int64) (float64, error) {
-	const query = `SELECT MIN(pos) FROM rlist WHERE key_id = ?`
+	const query = `SELECT MIN(pos) FROM rlist WHERE keyId = ?`
 	var pos sql.NullFloat64
 	if err := db.QueryRow(query, keyID).Scan(&pos); err != nil {
 		return 0, err
@@ -36,7 +36,7 @@ func getMinPos(db Querier, keyID int64) (float64, error) {
 }
 
 func getMaxPos(db Querier, keyID int64) (float64, error) {
-	const query = `SELECT MAX(pos) FROM rlist WHERE key_id = ?`
+	const query = `SELECT MAX(pos) FROM rlist WHERE keyId = ?`
 	var pos sql.NullFloat64
 	if err := db.QueryRow(query, keyID).Scan(&pos); err != nil {
 		return 0, err
@@ -63,7 +63,7 @@ func lpush(db Querier, key string, values ...string) (int, error) {
 	}
 
 	// Insert values in reverse order so first value ends up first
-	const insert = `INSERT INTO rlist (key_id, pos, value) VALUES (?, ?, ?)`
+	const insert = `INSERT INTO rlist (keyId, pos, value) VALUES (?, ?, ?)`
 	for i := len(values) - 1; i >= 0; i-- {
 		minPos -= posGap
 		if _, err := db.Exec(insert, keyID, minPos, []byte(values[i])); err != nil {
@@ -89,7 +89,7 @@ func rpush(db Querier, key string, values ...string) (int, error) {
 		return 0, err
 	}
 
-	const insert = `INSERT INTO rlist (key_id, pos, value) VALUES (?, ?, ?)`
+	const insert = `INSERT INTO rlist (keyId, pos, value) VALUES (?, ?, ?)`
 	for _, value := range values {
 		maxPos += posGap
 		if _, err := db.Exec(insert, keyID, maxPos, []byte(value)); err != nil {
@@ -108,7 +108,7 @@ func lpop(db Querier, key string) (string, error) {
 
 	const query = `
 		SELECT pos, value FROM rlist
-		WHERE key_id = ?
+		WHERE keyId = ?
 		ORDER BY pos ASC
 		LIMIT 1
 	`
@@ -121,7 +121,7 @@ func lpop(db Querier, key string) (string, error) {
 		return "", err
 	}
 
-	const del = `DELETE FROM rlist WHERE key_id = ? AND pos = ?`
+	const del = `DELETE FROM rlist WHERE keyId = ? AND pos = ?`
 	if _, err := db.Exec(del, keyID, pos); err != nil {
 		return "", err
 	}
@@ -137,7 +137,7 @@ func rpop(db Querier, key string) (string, error) {
 
 	const query = `
 		SELECT pos, value FROM rlist
-		WHERE key_id = ?
+		WHERE keyId = ?
 		ORDER BY pos DESC
 		LIMIT 1
 	`
@@ -150,7 +150,7 @@ func rpop(db Querier, key string) (string, error) {
 		return "", err
 	}
 
-	const del = `DELETE FROM rlist WHERE key_id = ? AND pos = ?`
+	const del = `DELETE FROM rlist WHERE keyId = ? AND pos = ?`
 	if _, err := db.Exec(del, keyID, pos); err != nil {
 		return "", err
 	}
@@ -169,14 +169,14 @@ func lset(db Querier, key string, index int, value string) error {
 	if index >= 0 {
 		query = `
 			SELECT pos FROM rlist
-			WHERE key_id = ?
+			WHERE keyId = ?
 			ORDER BY pos ASC
 			LIMIT 1 OFFSET ?
 		`
 	} else {
 		query = `
 			SELECT pos FROM rlist
-			WHERE key_id = ?
+			WHERE keyId = ?
 			ORDER BY pos DESC
 			LIMIT 1 OFFSET ?
 		`
@@ -188,7 +188,7 @@ func lset(db Querier, key string, index int, value string) error {
 		return err
 	}
 
-	const update = `UPDATE rlist SET value = ? WHERE key_id = ? AND pos = ?`
+	const update = `UPDATE rlist SET value = ? WHERE keyId = ? AND pos = ?`
 	_, err = db.Exec(update, []byte(value), keyID, pos)
 	return err
 }
@@ -215,14 +215,14 @@ func ltrim(db Querier, key string, start, stop int) error {
 	// Get positions to keep
 	const getPositions = `
 		SELECT pos FROM rlist
-		WHERE key_id = ?
+		WHERE keyId = ?
 		ORDER BY pos ASC
 		LIMIT ? OFFSET ?
 	`
 	limit := stop - start + 1
 	if limit <= 0 {
 		// Delete all
-		const delAll = `DELETE FROM rlist WHERE key_id = ?`
+		const delAll = `DELETE FROM rlist WHERE keyId = ?`
 		_, err = db.Exec(delAll, keyID)
 		return err
 	}
@@ -246,7 +246,7 @@ func ltrim(db Querier, key string, start, stop int) error {
 	}
 
 	if len(keepPositions) == 0 {
-		const delAll = `DELETE FROM rlist WHERE key_id = ?`
+		const delAll = `DELETE FROM rlist WHERE keyId = ?`
 		_, err = db.Exec(delAll, keyID)
 		return err
 	}
@@ -255,7 +255,7 @@ func ltrim(db Querier, key string, start, stop int) error {
 	minKeep := keepPositions[0]
 	maxKeep := keepPositions[len(keepPositions)-1]
 
-	const delOutside = `DELETE FROM rlist WHERE key_id = ? AND (pos < ? OR pos > ?)`
+	const delOutside = `DELETE FROM rlist WHERE keyId = ? AND (pos < ? OR pos > ?)`
 	_, err = db.Exec(delOutside, keyID, minKeep, maxKeep)
 	return err
 }
@@ -269,7 +269,7 @@ func linsert(db Querier, key, pivot, value string, before bool) (int, error) {
 	// Find pivot position
 	const findPivot = `
 		SELECT pos FROM rlist
-		WHERE key_id = ? AND value = ?
+		WHERE keyId = ? AND value = ?
 		ORDER BY pos ASC
 		LIMIT 1
 	`
@@ -286,7 +286,7 @@ func linsert(db Querier, key, pivot, value string, before bool) (int, error) {
 		// Get previous position
 		const getPrev = `
 			SELECT MAX(pos) FROM rlist
-			WHERE key_id = ? AND pos < ?
+			WHERE keyId = ? AND pos < ?
 		`
 		var prevPos sql.NullFloat64
 		if err := db.QueryRow(getPrev, keyID, pivotPos).Scan(&prevPos); err != nil {
@@ -301,7 +301,7 @@ func linsert(db Querier, key, pivot, value string, before bool) (int, error) {
 		// Get next position
 		const getNext = `
 			SELECT MIN(pos) FROM rlist
-			WHERE key_id = ? AND pos > ?
+			WHERE keyId = ? AND pos > ?
 		`
 		var nextPos sql.NullFloat64
 		if err := db.QueryRow(getNext, keyID, pivotPos).Scan(&nextPos); err != nil {
@@ -314,7 +314,7 @@ func linsert(db Querier, key, pivot, value string, before bool) (int, error) {
 		}
 	}
 
-	const insert = `INSERT INTO rlist (key_id, pos, value) VALUES (?, ?, ?)`
+	const insert = `INSERT INTO rlist (keyId, pos, value) VALUES (?, ?, ?)`
 	if _, err := db.Exec(insert, keyID, newPos, []byte(value)); err != nil {
 		return 0, err
 	}
@@ -328,7 +328,7 @@ func linsert(db Querier, key, pivot, value string, before bool) (int, error) {
 // parameter, so a count of any size stays one integer argument.
 func lremSelect(keyID int64, count int, value string) (string, []any) {
 	args := []any{keyID, []byte(value)}
-	const match = `SELECT pos FROM rlist WHERE key_id = ? AND value = ?`
+	const match = `SELECT pos FROM rlist WHERE keyId = ? AND value = ?`
 	switch {
 	case count == 0:
 		return match, args
@@ -372,7 +372,7 @@ func lrem(db Querier, key string, count int, value string) (int, error) {
 
 	removed := 0
 	for _, pos := range positions {
-		const del = `DELETE FROM rlist WHERE key_id = ? AND pos = ?`
+		const del = `DELETE FROM rlist WHERE keyId = ? AND pos = ?`
 		if _, err := db.Exec(del, keyID, pos); err != nil {
 			return removed, err
 		}

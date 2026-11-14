@@ -114,7 +114,7 @@ func zremTx(db Querier, keyTx *rkey.Tx, key string, members ...string) (int, err
 	}
 
 	removed := 0
-	const del = `DELETE FROM rzset WHERE key_id = ? AND member = ?`
+	const del = `DELETE FROM rzset WHERE keyId = ? AND member = ?`
 	for _, member := range members {
 		res, err := db.Exec(del, k.ID, []byte(member))
 		if err != nil {

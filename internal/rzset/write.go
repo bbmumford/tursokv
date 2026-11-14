@@ -41,7 +41,7 @@ func zaddInternal(db Querier, keyID int64, opts *ZAddOptions, members ...ScoreMe
 
 	for _, sm := range members {
 		// Check if member exists
-		const getScore = `SELECT score FROM rzset WHERE key_id = ? AND member = ?`
+		const getScore = `SELECT score FROM rzset WHERE keyId = ? AND member = ?`
 		var currentScore float64
 		err := db.QueryRow(getScore, keyID, []byte(sm.Member)).Scan(&currentScore)
 		exists := err == nil
@@ -59,7 +59,7 @@ func zaddInternal(db Querier, keyID int64, opts *ZAddOptions, members ...ScoreMe
 			}
 
 			// Update score
-			const update = `UPDATE rzset SET score = ? WHERE key_id = ? AND member = ?`
+			const update = `UPDATE rzset SET score = ? WHERE keyId = ? AND member = ?`
 			if _, err := db.Exec(update, sm.Score, keyID, []byte(sm.Member)); err != nil {
 				return added, err
 			}
@@ -72,7 +72,7 @@ func zaddInternal(db Querier, keyID int64, opts *ZAddOptions, members ...ScoreMe
 				continue // Only update existing
 			}
 
-			const insert = `INSERT INTO rzset (key_id, member, score) VALUES (?, ?, ?)`
+			const insert = `INSERT INTO rzset (keyId, member, score) VALUES (?, ?, ?)`
 			if _, err := db.Exec(insert, keyID, []byte(sm.Member), sm.Score); err != nil {
 				return added, err
 			}
@@ -98,7 +98,7 @@ func zrem(db Querier, key string, members ...string) (int, error) {
 	}
 
 	removed := 0
-	const del = `DELETE FROM rzset WHERE key_id = ? AND member = ?`
+	const del = `DELETE FROM rzset WHERE keyId = ? AND member = ?`
 	for _, member := range members {
 		res, err := db.Exec(del, keyID, []byte(member))
 		if err != nil {
@@ -124,7 +124,7 @@ func zincrbyInternal(db Querier, keyID int64, member string, delta float64) (flo
 	memberBytes := []byte(member)
 
 	// Get current score
-	const getScore = `SELECT score FROM rzset WHERE key_id = ? AND member = ?`
+	const getScore = `SELECT score FROM rzset WHERE keyId = ? AND member = ?`
 	var currentScore float64
 	err := db.QueryRow(getScore, keyID, memberBytes).Scan(&currentScore)
 	if err == sql.ErrNoRows {
@@ -136,9 +136,9 @@ func zincrbyInternal(db Querier, keyID int64, member string, delta float64) (flo
 	newScore := currentScore + delta
 
 	const upsert = `
-		INSERT INTO rzset (key_id, member, score)
+		INSERT INTO rzset (keyId, member, score)
 		VALUES (?, ?, ?)
-		ON CONFLICT(key_id, member) DO UPDATE SET score = excluded.score
+		ON CONFLICT(keyId, member) DO UPDATE SET score = excluded.score
 	`
 	if _, err := db.Exec(upsert, keyID, memberBytes, newScore); err != nil {
 		return 0, err
@@ -159,7 +159,7 @@ func zpopmin(db Querier, key string) (ScoreMember, bool, error) {
 func zpopminInternal(db Querier, keyID int64) (ScoreMember, bool, error) {
 	const query = `
 		SELECT member, score FROM rzset
-		WHERE key_id = ?
+		WHERE keyId = ?
 		ORDER BY score ASC, member ASC
 		LIMIT 1
 	`
@@ -172,7 +172,7 @@ func zpopminInternal(db Querier, keyID int64) (ScoreMember, bool, error) {
 		return ScoreMember{}, false, err
 	}
 
-	const del = `DELETE FROM rzset WHERE key_id = ? AND member = ?`
+	const del = `DELETE FROM rzset WHERE keyId = ? AND member = ?`
 	if _, err := db.Exec(del, keyID, member); err != nil {
 		return ScoreMember{}, false, err
 	}
@@ -192,7 +192,7 @@ func zpopmax(db Querier, key string) (ScoreMember, bool, error) {
 func zpopmaxInternal(db Querier, keyID int64) (ScoreMember, bool, error) {
 	const query = `
 		SELECT member, score FROM rzset
-		WHERE key_id = ?
+		WHERE keyId = ?
 		ORDER BY score DESC, member DESC
 		LIMIT 1
 	`
@@ -205,7 +205,7 @@ func zpopmaxInternal(db Querier, keyID int64) (ScoreMember, bool, error) {
 		return ScoreMember{}, false, err
 	}
 
-	const del = `DELETE FROM rzset WHERE key_id = ? AND member = ?`
+	const del = `DELETE FROM rzset WHERE keyId = ? AND member = ?`
 	if _, err := db.Exec(del, keyID, member); err != nil {
 		return ScoreMember{}, false, err
 	}
@@ -226,7 +226,7 @@ func zremrangebyrank(db Querier, key string, start, stop int) (int, error) {
 	}
 
 	removed := 0
-	const del = `DELETE FROM rzset WHERE key_id = ? AND member = ?`
+	const del = `DELETE FROM rzset WHERE keyId = ? AND member = ?`
 	for _, member := range members {
 		res, err := db.Exec(del, keyID, []byte(member))
 		if err != nil {
@@ -245,7 +245,7 @@ func zremrangebyscore(db Querier, key string, min, max float64) (int, error) {
 		return 0, err
 	}
 
-	const del = `DELETE FROM rzset WHERE key_id = ? AND score >= ? AND score <= ?`
+	const del = `DELETE FROM rzset WHERE keyId = ? AND score >= ? AND score <= ?`
 	res, err := db.Exec(del, keyID, min, max)
 	if err != nil {
 		return 0, err

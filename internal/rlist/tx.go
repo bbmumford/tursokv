@@ -77,7 +77,7 @@ func lpushTx(db Querier, keyTx *rkey.Tx, key string, values ...string) (int, err
 		return 0, err
 	}
 
-	const insert = `INSERT INTO rlist (key_id, pos, value) VALUES (?, ?, ?)`
+	const insert = `INSERT INTO rlist (keyId, pos, value) VALUES (?, ?, ?)`
 	for i := len(values) - 1; i >= 0; i-- {
 		minPos -= posGap
 		if _, err := db.Exec(insert, k.ID, minPos, []byte(values[i])); err != nil {
@@ -103,7 +103,7 @@ func rpushTx(db Querier, keyTx *rkey.Tx, key string, values ...string) (int, err
 		return 0, err
 	}
 
-	const insert = `INSERT INTO rlist (key_id, pos, value) VALUES (?, ?, ?)`
+	const insert = `INSERT INTO rlist (keyId, pos, value) VALUES (?, ?, ?)`
 	for _, value := range values {
 		maxPos += posGap
 		if _, err := db.Exec(insert, k.ID, maxPos, []byte(value)); err != nil {
@@ -125,7 +125,7 @@ func lpopTx(db Querier, keyTx *rkey.Tx, key string) (string, error) {
 
 	const query = `
 		SELECT pos, value FROM rlist
-		WHERE key_id = ?
+		WHERE keyId = ?
 		ORDER BY pos ASC
 		LIMIT 1
 	`
@@ -138,7 +138,7 @@ func lpopTx(db Querier, keyTx *rkey.Tx, key string) (string, error) {
 		return "", err
 	}
 
-	const del = `DELETE FROM rlist WHERE key_id = ? AND pos = ?`
+	const del = `DELETE FROM rlist WHERE keyId = ? AND pos = ?`
 	if _, err := db.Exec(del, k.ID, pos); err != nil {
 		return "", err
 	}
@@ -157,7 +157,7 @@ func rpopTx(db Querier, keyTx *rkey.Tx, key string) (string, error) {
 
 	const query = `
 		SELECT pos, value FROM rlist
-		WHERE key_id = ?
+		WHERE keyId = ?
 		ORDER BY pos DESC
 		LIMIT 1
 	`
@@ -170,7 +170,7 @@ func rpopTx(db Querier, keyTx *rkey.Tx, key string) (string, error) {
 		return "", err
 	}
 
-	const del = `DELETE FROM rlist WHERE key_id = ? AND pos = ?`
+	const del = `DELETE FROM rlist WHERE keyId = ? AND pos = ?`
 	if _, err := db.Exec(del, k.ID, pos); err != nil {
 		return "", err
 	}
@@ -188,14 +188,14 @@ func lsetTx(db Querier, keyTx *rkey.Tx, key string, index int, value string) err
 	if index >= 0 {
 		query = `
 			SELECT pos FROM rlist
-			WHERE key_id = ?
+			WHERE keyId = ?
 			ORDER BY pos ASC
 			LIMIT 1 OFFSET ?
 		`
 	} else {
 		query = `
 			SELECT pos FROM rlist
-			WHERE key_id = ?
+			WHERE keyId = ?
 			ORDER BY pos DESC
 			LIMIT 1 OFFSET ?
 		`
@@ -207,7 +207,7 @@ func lsetTx(db Querier, keyTx *rkey.Tx, key string, index int, value string) err
 		return err
 	}
 
-	const update = `UPDATE rlist SET value = ? WHERE key_id = ? AND pos = ?`
+	const update = `UPDATE rlist SET value = ? WHERE keyId = ? AND pos = ?`
 	_, err = db.Exec(update, []byte(value), k.ID, pos)
 	return err
 }

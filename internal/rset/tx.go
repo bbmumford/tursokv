@@ -79,9 +79,9 @@ func saddTx(db Querier, keyTx *rkey.Tx, key string, members ...string) (int, err
 
 	added := 0
 	const insert = `
-		INSERT INTO rset (key_id, member)
+		INSERT INTO rset (keyId, member)
 		VALUES (?, ?)
-		ON CONFLICT(key_id, member) DO NOTHING
+		ON CONFLICT(keyId, member) DO NOTHING
 	`
 	for _, member := range members {
 		res, err := db.Exec(insert, k.ID, []byte(member))
@@ -109,7 +109,7 @@ func sremTx(db Querier, keyTx *rkey.Tx, key string, members ...string) (int, err
 	}
 
 	removed := 0
-	const del = `DELETE FROM rset WHERE key_id = ? AND member = ?`
+	const del = `DELETE FROM rset WHERE keyId = ? AND member = ?`
 	for _, member := range members {
 		res, err := db.Exec(del, k.ID, []byte(member))
 		if err != nil {
@@ -133,7 +133,7 @@ func spopTx(db Querier, keyTx *rkey.Tx, key string) (string, error) {
 
 	const query = `
 		SELECT member FROM rset
-		WHERE key_id = ?
+		WHERE keyId = ?
 		ORDER BY RANDOM()
 		LIMIT 1
 	`
@@ -145,7 +145,7 @@ func spopTx(db Querier, keyTx *rkey.Tx, key string) (string, error) {
 		return "", err
 	}
 
-	const del = `DELETE FROM rset WHERE key_id = ? AND member = ?`
+	const del = `DELETE FROM rset WHERE keyId = ? AND member = ?`
 	if _, err := db.Exec(del, k.ID, member); err != nil {
 		return "", err
 	}
@@ -169,7 +169,7 @@ func smoveTx(db Querier, keyTx *rkey.Tx, src, dst, member string) (bool, error) 
 	}
 
 	// Remove from source
-	const del = `DELETE FROM rset WHERE key_id = ? AND member = ?`
+	const del = `DELETE FROM rset WHERE keyId = ? AND member = ?`
 	if _, err := db.Exec(del, srcKey.ID, []byte(member)); err != nil {
 		return false, err
 	}

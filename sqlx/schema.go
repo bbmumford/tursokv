@@ -39,52 +39,52 @@ CREATE TABLE IF NOT EXISTS rkey (
     mtime INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000)
 );
 
-CREATE INDEX IF NOT EXISTS rkey_etime ON rkey(etime) WHERE etime IS NOT NULL;
-CREATE INDEX IF NOT EXISTS rkey_type ON rkey(type);
+CREATE INDEX IF NOT EXISTS rkeyEtime ON rkey(etime) WHERE etime IS NOT NULL;
+CREATE INDEX IF NOT EXISTS rkeyType ON rkey(type);
 
 -- String values table
 CREATE TABLE IF NOT EXISTS rstring (
-    key_id INTEGER PRIMARY KEY REFERENCES rkey(id) ON DELETE CASCADE,
+    keyId INTEGER PRIMARY KEY REFERENCES rkey(id) ON DELETE CASCADE,
     value BLOB NOT NULL
 );
 
 -- List values table (doubly-linked list in table form)
 CREATE TABLE IF NOT EXISTS rlist (
-    key_id INTEGER NOT NULL REFERENCES rkey(id) ON DELETE CASCADE,
+    keyId INTEGER NOT NULL REFERENCES rkey(id) ON DELETE CASCADE,
     pos REAL NOT NULL,  -- Position for ordering (allows inserts between elements)
     value BLOB NOT NULL,
-    PRIMARY KEY (key_id, pos)
+    PRIMARY KEY (keyId, pos)
 );
 
-CREATE INDEX IF NOT EXISTS rlist_key ON rlist(key_id);
+CREATE INDEX IF NOT EXISTS rlistKey ON rlist(keyId);
 
 -- Set values table
 CREATE TABLE IF NOT EXISTS rset (
-    key_id INTEGER NOT NULL REFERENCES rkey(id) ON DELETE CASCADE,
+    keyId INTEGER NOT NULL REFERENCES rkey(id) ON DELETE CASCADE,
     member BLOB NOT NULL,
-    PRIMARY KEY (key_id, member)
+    PRIMARY KEY (keyId, member)
 );
 
-CREATE INDEX IF NOT EXISTS rset_key ON rset(key_id);
+CREATE INDEX IF NOT EXISTS rsetKey ON rset(keyId);
 
 -- Hash values table
 CREATE TABLE IF NOT EXISTS rhash (
-    key_id INTEGER NOT NULL REFERENCES rkey(id) ON DELETE CASCADE,
+    keyId INTEGER NOT NULL REFERENCES rkey(id) ON DELETE CASCADE,
     field TEXT NOT NULL,
     value BLOB NOT NULL,
-    PRIMARY KEY (key_id, field)
+    PRIMARY KEY (keyId, field)
 );
 
-CREATE INDEX IF NOT EXISTS rhash_key ON rhash(key_id);
+CREATE INDEX IF NOT EXISTS rhashKey ON rhash(keyId);
 
 -- Sorted set values table
 CREATE TABLE IF NOT EXISTS rzset (
-    key_id INTEGER NOT NULL REFERENCES rkey(id) ON DELETE CASCADE,
+    keyId INTEGER NOT NULL REFERENCES rkey(id) ON DELETE CASCADE,
     member BLOB NOT NULL,
     score REAL NOT NULL,
-    PRIMARY KEY (key_id, member)
+    PRIMARY KEY (keyId, member)
 );
 
-CREATE INDEX IF NOT EXISTS rzset_key ON rzset(key_id);
-CREATE INDEX IF NOT EXISTS rzset_score ON rzset(key_id, score);
+CREATE INDEX IF NOT EXISTS rzsetKey ON rzset(keyId);
+CREATE INDEX IF NOT EXISTS rzsetScore ON rzset(keyId, score);
 `

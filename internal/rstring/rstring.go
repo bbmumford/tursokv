@@ -202,7 +202,7 @@ func getString(db Querier, key string) (string, error) {
 func getBytes(db Querier, key string) ([]byte, error) {
 	const query = `
 		SELECT s.value FROM rstring s
-		JOIN rkey k ON k.id = s.key_id
+		JOIN rkey k ON k.id = s.keyId
 		WHERE k.key = ? AND k.type = ? AND (k.etime IS NULL OR k.etime > ?)
 	`
 	now := time.Now().UnixMilli()
@@ -243,9 +243,9 @@ func setBytes(db Querier, key string, value []byte, opts *SetOptions) error {
 	}
 
 	const upsertValue = `
-		INSERT INTO rstring (key_id, value)
+		INSERT INTO rstring (keyId, value)
 		VALUES (?, ?)
-		ON CONFLICT(key_id) DO UPDATE SET value = excluded.value
+		ON CONFLICT(keyId) DO UPDATE SET value = excluded.value
 	`
 	_, err = db.Exec(upsertValue, keyID, value)
 	return err
@@ -269,9 +269,9 @@ func setBytesTx(db Querier, keyTx *rkey.Tx, key string, value []byte, opts *SetO
 	}
 
 	const upsert = `
-		INSERT INTO rstring (key_id, value)
+		INSERT INTO rstring (keyId, value)
 		VALUES (?, ?)
-		ON CONFLICT(key_id) DO UPDATE SET value = excluded.value
+		ON CONFLICT(keyId) DO UPDATE SET value = excluded.value
 	`
 	_, err = db.Exec(upsert, k.ID, value)
 	return err

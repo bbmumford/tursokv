@@ -24,7 +24,7 @@ func getKeyID(db Querier, key string) (int64, error) {
 func zscore(db Querier, key, member string) (float64, bool, error) {
 	const query = `
 		SELECT z.score FROM rzset z
-		JOIN rkey k ON k.id = z.key_id
+		JOIN rkey k ON k.id = z.keyId
 		WHERE k.key = ? AND k.type = ? AND z.member = ?
 		AND (k.etime IS NULL OR k.etime > ?)
 	`
@@ -49,9 +49,9 @@ func zrank(db Querier, key, member string) (int, bool, error) {
 	// Get rank by counting members with lower score or same score and lower member
 	const query = `
 		SELECT COUNT(*) FROM rzset
-		WHERE key_id = ? AND (
-			score < (SELECT score FROM rzset WHERE key_id = ? AND member = ?) OR
-			(score = (SELECT score FROM rzset WHERE key_id = ? AND member = ?) AND member < ?)
+		WHERE keyId = ? AND (
+			score < (SELECT score FROM rzset WHERE keyId = ? AND member = ?) OR
+			(score = (SELECT score FROM rzset WHERE keyId = ? AND member = ?) AND member < ?)
 		)
 	`
 	var rank int
@@ -59,7 +59,7 @@ func zrank(db Querier, key, member string) (int, bool, error) {
 	err = db.QueryRow(query, keyID, keyID, memberBytes, keyID, memberBytes, memberBytes).Scan(&rank)
 	if err != nil {
 		// Check if member exists
-		const check = `SELECT 1 FROM rzset WHERE key_id = ? AND member = ?`
+		const check = `SELECT 1 FROM rzset WHERE keyId = ? AND member = ?`
 		var exists int
 		if db.QueryRow(check, keyID, memberBytes).Scan(&exists) == sql.ErrNoRows {
 			return 0, false, nil
@@ -79,16 +79,16 @@ func zrevrank(db Querier, key, member string) (int, bool, error) {
 	// Get reverse rank
 	const query = `
 		SELECT COUNT(*) FROM rzset
-		WHERE key_id = ? AND (
-			score > (SELECT score FROM rzset WHERE key_id = ? AND member = ?) OR
-			(score = (SELECT score FROM rzset WHERE key_id = ? AND member = ?) AND member > ?)
+		WHERE keyId = ? AND (
+			score > (SELECT score FROM rzset WHERE keyId = ? AND member = ?) OR
+			(score = (SELECT score FROM rzset WHERE keyId = ? AND member = ?) AND member > ?)
 		)
 	`
 	var rank int
 	memberBytes := []byte(member)
 	err = db.QueryRow(query, keyID, keyID, memberBytes, keyID, memberBytes, memberBytes).Scan(&rank)
 	if err != nil {
-		const check = `SELECT 1 FROM rzset WHERE key_id = ? AND member = ?`
+		const check = `SELECT 1 FROM rzset WHERE keyId = ? AND member = ?`
 		var exists int
 		if db.QueryRow(check, keyID, memberBytes).Scan(&exists) == sql.ErrNoRows {
 			return 0, false, nil
@@ -102,7 +102,7 @@ func zrevrank(db Querier, key, member string) (int, bool, error) {
 func zcard(db Querier, key string) (int, error) {
 	const query = `
 		SELECT COUNT(*) FROM rzset z
-		JOIN rkey k ON k.id = z.key_id
+		JOIN rkey k ON k.id = z.keyId
 		WHERE k.key = ? AND k.type = ?
 		AND (k.etime IS NULL OR k.etime > ?)
 	`
@@ -115,7 +115,7 @@ func zcard(db Querier, key string) (int, error) {
 func zcount(db Querier, key string, min, max float64) (int, error) {
 	const query = `
 		SELECT COUNT(*) FROM rzset z
-		JOIN rkey k ON k.id = z.key_id
+		JOIN rkey k ON k.id = z.keyId
 		WHERE k.key = ? AND k.type = ?
 		AND (k.etime IS NULL OR k.etime > ?)
 		AND z.score >= ? AND z.score <= ?
@@ -173,7 +173,7 @@ func zrangeWithScores(db Querier, key string, start, stop int) ([]ScoreMember, e
 	limit := stop - start + 1
 	const query = `
 		SELECT member, score FROM rzset
-		WHERE key_id = ?
+		WHERE keyId = ?
 		ORDER BY score ASC, member ASC
 		LIMIT ? OFFSET ?
 	`
@@ -242,7 +242,7 @@ func zrevrangeWithScores(db Querier, key string, start, stop int) ([]ScoreMember
 	limit := stop - start + 1
 	const query = `
 		SELECT member, score FROM rzset
-		WHERE key_id = ?
+		WHERE keyId = ?
 		ORDER BY score DESC, member DESC
 		LIMIT ? OFFSET ?
 	`
@@ -275,13 +275,13 @@ func zrangebyscore(db Querier, key string, min, max float64, count, offset int) 
 	if count < 0 {
 		query = `
 			SELECT member FROM rzset
-			WHERE key_id = ? AND score >= ? AND score <= ?
+			WHERE keyId = ? AND score >= ? AND score <= ?
 			ORDER BY score ASC, member ASC
 		`
 	} else {
 		query = `
 			SELECT member FROM rzset
-			WHERE key_id = ? AND score >= ? AND score <= ?
+			WHERE keyId = ? AND score >= ? AND score <= ?
 			ORDER BY score ASC, member ASC
 			LIMIT ? OFFSET ?
 		`
