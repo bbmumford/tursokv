@@ -142,6 +142,11 @@ var (
 	ErrCipherWithoutKey    = sqlx.ErrCipherWithoutKey
 )
 
+// ErrWrongType is what a set, list, hash or sorted-set write answers for a
+// live key that holds another type, and stores nothing (Redis's WRONGTYPE).
+// SET is the one write that replaces a key of any type.
+var ErrWrongType = rkey.ErrWrongType
+
 // defaultSyncInterval is the background sync period when SyncInterval is zero.
 const defaultSyncInterval = time.Minute
 

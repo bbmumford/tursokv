@@ -13,19 +13,10 @@ func hset(db Querier, key, field, value string) (bool, error) {
 }
 
 func hsetBytes(db Querier, key, field string, value []byte) (bool, error) {
-	now := time.Now().UnixMilli()
-
-	// Upsert key
-	const upsertKey = `
-		INSERT INTO rkey (key, type, version, mtime)
-		VALUES (?, ?, 0, ?)
-		ON CONFLICT(key) DO UPDATE SET
-			version = version + 1,
-			mtime = excluded.mtime
-		RETURNING id
-	`
-	var keyID int64
-	if err := db.QueryRow(upsertKey, key, rkey.TypeHash, now).Scan(&keyID); err != nil {
+	// Claim the key for a hash write (rkey.Claim): a key past its expiry starts
+	// afresh, and a live key of another type is refused with rkey.ErrWrongType.
+	keyID, err := rkey.Claim(db, key, rkey.TypeHash, false)
+	if err != nil {
 		return false, err
 	}
 
@@ -40,7 +31,7 @@ func hsetBytes(db Querier, key, field string, value []byte) (bool, error) {
 		VALUES (?, ?, ?)
 		ON CONFLICT(keyId, field) DO UPDATE SET value = excluded.value
 	`
-	_, err := db.Exec(upsertField, keyID, field, value)
+	_, err = db.Exec(upsertField, keyID, field, value)
 	return isNew, err
 }
 

@@ -212,6 +212,10 @@ func get(db Querier, key string) (Key, error) {
 	return k, err
 }
 
+// getOrCreate answers key's live row of type typ without writing it, refuses a
+// live row of another type with ErrWrongType, and otherwise claims the key
+// (Claim): a key past its expiry starts afresh, so the plain insert of a new
+// row never meets the expired row's unique key.
 func getOrCreate(db Querier, key string, typ Type) (Key, error) {
 	k, err := get(db, key)
 	if err == nil {
@@ -223,18 +227,58 @@ func getOrCreate(db Querier, key string, typ Type) (Key, error) {
 	if err != ErrNotFound {
 		return Key{}, err
 	}
+	if _, err := Claim(db, key, typ, false); err != nil {
+		return Key{}, err
+	}
+	return get(db, key)
+}
 
-	// Create new key
-	const insert = `
-		INSERT INTO rkey (key, type, version, mtime)
-		VALUES (?, ?, 0, ?)
-		RETURNING id, key, type, version, etime, mtime
-	`
+// valueTables are the tables that hold a key's values, each by keyId.
+var valueTables = []string{"rstring", "rlist", "rset", "rhash", "rzset"}
+
+// Claim answers the id of key's row for a write of type typ, so that the
+// values the caller then writes under the id are the ones reads find. Every
+// value type's write path calls it inside the write's transaction:
+//   - no row: a new row of typ;
+//   - a row whose expiry has passed: that key no longer exists, so its old
+//     values are deleted and the row is reused as a new key of typ with no
+//     expiry (reads filter expired rows, and a write that kept the old expiry
+//     would be invisible);
+//   - a live row of typ: that row, its version and mtime advanced and its
+//     expiry kept;
+//   - a live row of another type: ErrWrongType, unless replace is set (SET
+//     replaces a key of any type), in which case the old values are deleted
+//     and the row becomes typ.
+func Claim(db Querier, key string, typ Type, replace bool) (int64, error) {
 	now := time.Now().UnixMilli()
-	err = db.QueryRow(insert, key, typ, now).Scan(
-		&k.ID, &k.Key, &k.Type, &k.Version, &k.ETime, &k.MTime,
+	var (
+		id    int64
+		have  Type
+		etime sql.NullInt64
 	)
-	return k, err
+	err := db.QueryRow(`SELECT id, type, etime FROM rkey WHERE key = ?`, key).Scan(&id, &have, &etime)
+	if err == sql.ErrNoRows {
+		err = db.QueryRow(`INSERT INTO rkey (key, type, version, mtime) VALUES (?, ?, 0, ?) RETURNING id`, key, typ, now).Scan(&id)
+		return id, err
+	}
+	if err != nil {
+		return 0, err
+	}
+	expired := etime.Valid && etime.Int64 <= now
+	if !expired && have != typ && !replace {
+		return 0, ErrWrongType
+	}
+	if expired || have != typ {
+		for _, table := range valueTables {
+			if _, err := db.Exec(`DELETE FROM `+table+` WHERE keyId = ?`, id); err != nil {
+				return 0, err
+			}
+		}
+		_, err = db.Exec(`UPDATE rkey SET type = ?, version = version + 1, etime = NULL, mtime = ? WHERE id = ?`, typ, now, id)
+		return id, err
+	}
+	_, err = db.Exec(`UPDATE rkey SET version = version + 1, mtime = ? WHERE id = ?`, now, id)
+	return id, err
 }
 
 func exists(db Querier, keys ...string) (int, error) {

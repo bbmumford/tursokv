@@ -2,24 +2,15 @@ package rzset
 
 import (
 	"database/sql"
-	"time"
 
 	"github.com/bbmumford/tursokv/internal/rkey"
 )
 
+// getOrCreateKey claims key for a write of this type (rkey.Claim): a key past
+// its expiry starts afresh, and a live key of another type is refused with
+// rkey.ErrWrongType.
 func getOrCreateKey(db Querier, key string) (int64, error) {
-	now := time.Now().UnixMilli()
-	const upsert = `
-		INSERT INTO rkey (key, type, version, mtime)
-		VALUES (?, ?, 0, ?)
-		ON CONFLICT(key) DO UPDATE SET
-			version = version + 1,
-			mtime = excluded.mtime
-		RETURNING id
-	`
-	var keyID int64
-	err := db.QueryRow(upsert, key, rkey.TypeZSet, now).Scan(&keyID)
-	return keyID, err
+	return rkey.Claim(db, key, rkey.TypeZSet, false)
 }
 
 func zadd(db Querier, key string, opts *ZAddOptions, members ...ScoreMember) (int, error) {

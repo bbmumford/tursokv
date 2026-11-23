@@ -227,18 +227,13 @@ func setBytes(db Querier, key string, value []byte, opts *SetOptions) error {
 		etime = &e
 	}
 
-	const upsertKey = `
-		INSERT INTO rkey (key, type, version, etime, mtime)
-		VALUES (?, ?, 0, ?, ?)
-		ON CONFLICT(key) DO UPDATE SET
-			version = version + 1,
-			etime = excluded.etime,
-			mtime = excluded.mtime
-		RETURNING id
-	`
-	var keyID int64
-	err := db.QueryRow(upsertKey, key, rkey.TypeString, etime, now).Scan(&keyID)
+	// SET replaces a key of any type (rkey.Claim with replace) and sets its
+	// expiry to the one asked for, none when no TTL is given.
+	keyID, err := rkey.Claim(db, key, rkey.TypeString, true)
 	if err != nil {
+		return err
+	}
+	if _, err := db.Exec(`UPDATE rkey SET etime = ? WHERE id = ?`, etime, keyID); err != nil {
 		return err
 	}
 
