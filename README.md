@@ -1,6 +1,6 @@
 # tursokv
 
-A Redis-like key-value store backed by the Turso Database engine, with concurrent writes, encryption at rest and embedded replicas that sync with Turso Cloud.
+tursokv is a Redis-like key-value store backed by the Turso Database engine, with concurrent writes, encryption at rest and embedded replicas that sync with Turso Cloud.
 
 ## Overview
 
@@ -352,13 +352,36 @@ The engine opens every connection with foreign keys off, so a one-time `PRAGMA f
 
 ## Dependencies
 
-- `turso.tech/database/tursogo` v0.8.0-pre.12: the Turso Database engine and its sync client
-- `github.com/bbmumford/policypool`: per-connection foreign-key enforcement
+- `github.com/bbmumford/policypool` (`sqlx`): per-connection foreign-key
+  enforcement.
+- `turso.tech/database/tursogo` v0.8.0-pre.12: the Turso Database engine and
+  its sync client.
+
+## Used by
+
+No package in the ORBTR estate imports it.
+
+## Platforms and build
+
+No cgo at build time: tursogo embeds the Turso engine as a shared library and
+loads it at run time through purego, so `CGO_ENABLED=0` builds work; the
+runtime needs libc, the dynamic loader and a writable cache directory (see
+Building and running). The module's
+`go` directive is 1.25.0, and `go.mod` replaces `github.com/bbmumford/policypool`
+with the sibling checkout `../policypool`.
 
 ## Credits
 
 Inspired by [Redka](https://github.com/nalgeon/redka) by Anton Zhiyanov.
 
-## License
+## Licence
 
-MIT
+MIT. Copyright (c) 2026 Brandon Miller-Mumford. The full text is in
+[LICENSE](LICENSE).
+
+## Contributing
+
+[AGENTS.md](AGENTS.md) holds the repository's two rules, for people and coding
+agents alike: no temporary documents in the repository, and conventional commit
+messages that stand on their own. [CLAUDE.md](CLAUDE.md) imports it for Claude
+Code.
