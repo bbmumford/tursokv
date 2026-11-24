@@ -45,7 +45,7 @@ tursokv is a Redis-like key-value store backed by the Turso Database engine, wit
 go get github.com/bbmumford/tursokv
 ```
 
-`tursokv` depends on `github.com/bbmumford/policypool`, resolved from a sibling checkout by the `replace github.com/bbmumford/policypool => ../policypool` line in `go.mod`.
+`tursokv` depends on `github.com/bbmumford/policypool`, resolved from a sibling checkout by the `replace github.com/bbmumford/policypool => ../policypool` line in `go.mod`, and on `github.com/bbmumford/filekind`, which policypool imports, resolved the same way from `../filekind`.
 
 ### Building and running
 
@@ -368,7 +368,8 @@ loads it at run time through purego, so `CGO_ENABLED=0` builds work; the
 runtime needs libc, the dynamic loader and a writable cache directory (see
 Building and running). The module's
 `go` directive is 1.25.0, and `go.mod` replaces `github.com/bbmumford/policypool`
-with the sibling checkout `../policypool`.
+and `github.com/bbmumford/filekind` (which policypool imports) with the sibling
+checkouts `../policypool` and `../filekind`.
 
 ## Credits
 
