@@ -97,6 +97,7 @@ func TestIsWriteConflict(t *testing.T) {
 		{"busy", fmt.Errorf("%w: database is busy", turso.ErrTursoBusy), false},
 		{"conflict text without the engine error", errors.New("Write-write conflict"), false},
 		{"transaction ended by the engine", errTxEnded, false},
+		{"commit-dependency abort", fmt.Errorf("%w: Commit dependency aborted, rollback and retry the whole transaction", turso.ErrTursoGeneric), true},
 		{"nil", nil, false},
 	}
 	for _, tc := range cases {

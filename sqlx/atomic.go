@@ -12,8 +12,8 @@ import (
 
 // Atomic runs fn in one transaction and commits it, so a call made of several
 // statements keeps all of its writes or none of them. When the transaction
-// fails with a write-write conflict, Atomic runs fn again in a fresh
-// transaction after a short wait.
+// fails with a write-write conflict or a commit-dependency abort, Atomic runs
+// fn again in a fresh transaction after a short wait.
 //
 // WHAT CONSUMES IT: the DB-path methods of the repositories in
 // internal/rstring, rhash, rlist, rset and rzset that write with more than
@@ -23,10 +23,12 @@ import (
 //
 // CONDITIONS. fn must be safe to run more than once: every statement goes
 // through tx, and results are assigned inside fn, so the run that commits
-// supplies them. A write-write conflict, at a statement or at COMMIT, is
-// retried until atomicRetry.attempts runs have been made, waiting a jittered,
+// supplies them. A write-write conflict, at a statement or at COMMIT, and a
+// commit-dependency abort (the engine aborting a transaction whose commit
+// depended on one that rolled back) are retried until atomicRetry.attempts
+// runs have been made, waiting a jittered,
 // capped, doubling interval between runs; after the last run Atomic returns
-// that conflict and none of fn's writes are kept. Every other error returns
+// that error and none of fn's writes are kept. Every other error returns
 // at once. fn must not call Update, View or Atomic, nor run statements
 // through the DB, for the same reason Update gives.
 //
@@ -80,14 +82,25 @@ func (p retryPolicy) wait(run int) time.Duration {
 	return half + rand.N(bound-half+1)
 }
 
-// writeConflictText is the engine's message for a write-write conflict.
-const writeConflictText = "Write-write conflict"
+// writeConflictText is the engine's message for a write-write conflict, and
+// commitDependencyText the start of its message when it aborts a transaction
+// whose commit depended on one that rolled back ("Commit dependency aborted,
+// rollback and retry the whole transaction"); both ask for the whole
+// transaction to run again.
+const (
+	writeConflictText    = "Write-write conflict"
+	commitDependencyText = "Commit dependency aborted"
+)
 
-// isWriteConflict reports whether err is the engine's write-write conflict.
-// tursogo has no error of its own for it: statusToError wraps
-// turso.ErrTursoGeneric with the engine's message, the same whether the
-// conflict is found at a statement, in a row a query steps to, or at COMMIT,
-// so the message is matched as well as the sentinel.
+// isWriteConflict reports whether err is the engine's write-write conflict or
+// its commit-dependency abort. tursogo has no error of its own for either:
+// statusToError wraps turso.ErrTursoGeneric with the engine's message, the
+// same whether the conflict is found at a statement, in a row a query steps
+// to, or at COMMIT, so the message is matched as well as the sentinel.
 func isWriteConflict(err error) bool {
-	return err != nil && errors.Is(err, turso.ErrTursoGeneric) && strings.Contains(err.Error(), writeConflictText)
+	if err == nil || !errors.Is(err, turso.ErrTursoGeneric) {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, writeConflictText) || strings.Contains(msg, commitDependencyText)
 }
