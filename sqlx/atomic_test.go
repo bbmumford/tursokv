@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -213,5 +214,53 @@ func TestRetryWaitBounds(t *testing.T) {
 	}
 	if w := (retryPolicy{}).wait(1); w != 0 {
 		t.Fatalf("a zero policy waits %v, want 0", w)
+	}
+}
+
+// Sixteen goroutines incrementing one row through Atomic all finish within a
+// budget of six runs: a call that keeps losing to the others runs alone from
+// its fourth run, so contention among Atomic calls never spends a budget.
+func TestAtomicFinishesEveryCallUnderContention(t *testing.T) {
+	p := atomicRetry
+	p.attempts = 6
+	withRetry(t, p)
+	db := openConcurrentKV(t)
+	const workers, each = 16, 40
+	var wg sync.WaitGroup
+	errs := make(chan error, workers*each)
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < each; i++ {
+				errs <- db.Atomic(func(tx *sql.Tx) error {
+					var v int
+					if err := tx.QueryRow("SELECT CAST(v AS INTEGER) FROM kv WHERE k = 'hot'").Scan(&v); err != nil {
+						return err
+					}
+					_, err := tx.Exec("UPDATE kv SET v = ? WHERE k = 'hot'", fmt.Sprint(v+1))
+					return err
+				})
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	failed := 0
+	var first error
+	for err := range errs {
+		if err != nil {
+			failed++
+			if first == nil {
+				first = err
+			}
+		}
+	}
+	if failed > 0 {
+		t.Fatalf("%d of %d Atomic calls failed within six runs; the first: %v", failed, workers*each, first)
+	}
+	var v int
+	if err := db.QueryRow("SELECT CAST(v AS INTEGER) FROM kv WHERE k = 'hot'").Scan(&v); err != nil || v != workers*each {
+		t.Fatalf("hot = %d, %v; want %d", v, err, workers*each)
 	}
 }

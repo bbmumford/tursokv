@@ -112,6 +112,8 @@ type DB struct {
 
 	// syncMu runs Sync, Push and Pull one at a time.
 	syncMu sync.Mutex
+	// gate lets an Atomic call that keeps conflicting run alone (Atomic).
+	gate atomicGate
 	// loopCancel stops the background sync loop and loopDone closes once it
 	// has returned; both are nil when no loop runs.
 	loopCancel context.CancelFunc
