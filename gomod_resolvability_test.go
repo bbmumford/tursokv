@@ -31,10 +31,7 @@ const zeroPseudoVersion = "v0.0.0-00010101000000-000000000000"
 // fails until it is removed. A list kept anywhere else drifts silently when
 // go.mod gains or drops a require; this one is read against the literal
 // go.mod on every run.
-var replacedSiblings = map[string]string{
-	"github.com/bbmumford/filekind":   "v0.0.0",
-	"github.com/bbmumford/policypool": "v0.0.0",
-}
+var replacedSiblings = map[string]string{}
 
 // goModJSON is the literal go.mod as `go mod edit -json` prints it. That
 // reads the file itself; `go list -m` would answer with the effective module
